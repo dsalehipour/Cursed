@@ -15,7 +15,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         let content = ContentView(
             store: store,
-            onSelect: { CursorLink.reveal(project: $0.project) },
+            onSelect: { [weak self] row in
+                self?.store.acknowledge(row.id)
+                self?.log("reveal \(row.project): \(row.title)")
+                CursorLink.reveal(project: row.project)
+            },
             onQuit: { NSApp.terminate(nil) }
         )
 
@@ -28,16 +32,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         log("launched at \(panel.frame.origin.x.rounded()),\(panel.frame.origin.y.rounded())")
 
+        // Row heights vary with content, so the window follows the rows themselves rather
+        // than just how many there are.
+        //
+        // The hop to the next runloop pass is load-bearing: @Published fires during willSet, so
+        // resizing here synchronously would force SwiftUI to lay out while `rows` still holds the
+        // previous value. That render satisfies the pending invalidation, and the new rows never
+        // reach the screen.
         store.$rows
-            .map(\.count)
+            .map { Metrics.windowHeight(rowCount: $0.count) }
             .removeDuplicates()
-            .sink { [weak self] count in
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] height in
                 guard let self else { return }
                 self.panel.resizeKeepingTopLeft(
-                    to: NSSize(
-                        width: Metrics.windowWidth,
-                        height: Metrics.windowHeight(rowCount: count)
-                    )
+                    to: NSSize(width: Metrics.windowWidth, height: height)
                 )
             }
             .store(in: &cancellables)
@@ -76,12 +85,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func announce(_ row: Store.Row) {
-        let succeeded: Bool
-        if case .done(let success) = row.status { succeeded = success } else { succeeded = true }
+        let completed = row.status == .done(success: true)
+        log("finished \(completed ? "ok" : "aborted"): \(row.title) (\(row.project)) after \(Format.duration(row.duration))")
 
-        log("finished \(succeeded ? "ok" : "error"): \(row.title) (\(row.project)) after \(Format.duration(row.duration))")
-
-        guard let sound = NSSound(named: succeeded ? "Glass" : "Basso") else { return }
+        // An aborted run was stopped by hand, so it is not news worth a chime.
+        guard completed, let sound = NSSound(named: "Glass") else { return }
         sound.volume = 0.35
         sound.play()
     }

@@ -1,13 +1,12 @@
 import SwiftUI
 import AppKit
-import QuartzCore
 
 enum Metrics {
     /// Width of the glass shapes themselves.
     static let contentWidth: CGFloat = 300
     /// Breathing room so the glass edges and their shading are never clipped by the window.
     static let inset: CGFloat = 12
-    static let rowHeight: CGFloat = 48
+    static let rowHeight: CGFloat = 46
     static let rowSpacing: CGFloat = 7
     static let emptyHeight: CGFloat = 38
     static let overflowHeight: CGFloat = 22
@@ -17,39 +16,51 @@ enum Metrics {
 
     static func windowHeight(rowCount: Int) -> CGFloat {
         let shown = min(rowCount, maxRows)
-        let body: CGFloat
-        if shown == 0 {
-            body = emptyHeight
-        } else {
-            body = CGFloat(shown) * rowHeight + CGFloat(shown - 1) * rowSpacing
-        }
+        let body: CGFloat = shown == 0
+            ? emptyHeight
+            : CGFloat(shown) * rowHeight + CGFloat(shown - 1) * rowSpacing
         let overflow: CGFloat = rowCount > maxRows ? overflowHeight + rowSpacing : 0
         return body + overflow + inset * 2
     }
 }
 
-extension TurnStatus {
-    var tint: Color {
+extension Attention {
+    /// The whole visual language of the panel. A run in flight looks like plain text; a finished
+    /// one you have not seen gets the only mark on screen; everything else recedes to grey.
+    /// Values run a little hotter than they would on regular glass: clear glass puts almost no
+    /// scrim between the text and whatever is behind the window, so the dimmed states need
+    /// help to stay readable rather than merely visible.
+    var titleOpacity: Double {
         switch self {
-        case .running: return Color(red: 0.29, green: 0.68, blue: 1.0)
-        case .stalled: return Color(red: 1.0, green: 0.74, blue: 0.28)
-        case .done(let success):
-            return success
-                ? Color(red: 0.30, green: 0.85, blue: 0.52)
-                : Color(red: 1.0, green: 0.45, blue: 0.42)
+        case .working, .unseen: return 1
+        case .settled: return 0.5
         }
     }
 
-    /// Live runs carry a hint of colour in the glass itself; finished ones fade back to neutral
-    /// so attention lands on what is still working. Kept faint because adjacent rows merge into
-    /// one glass shape, and strong tints would blend into mud where they meet.
-    var glassTint: Color {
+    var projectOpacity: Double {
         switch self {
-        case .running: return tint.opacity(0.14)
-        case .stalled: return tint.opacity(0.16)
-        case .done: return tint.opacity(0.04)
+        case .working, .unseen: return 0.85
+        case .settled: return 0.4
         }
     }
+
+    var timeOpacity: Double {
+        switch self {
+        case .working, .unseen: return 0.62
+        case .settled: return 0.36
+        }
+    }
+
+    /// Kept faint: adjacent rows merge into one glass shape, and a strong tint would turn to mud
+    /// where they meet.
+    var glassTint: Color? {
+        switch self {
+        case .unseen: return Self.dotColor.opacity(0.1)
+        case .working, .settled: return nil
+        }
+    }
+
+    static let dotColor = Color(red: 0.22, green: 0.80, blue: 0.46)
 }
 
 struct ContentView: View {
@@ -62,7 +73,7 @@ struct ContentView: View {
     /// Structural changes should animate; the per-second timer tick should not. Keying the
     /// animation on identity and state only is what keeps the morph from firing every second.
     private var shape: [String] {
-        store.rows.map { "\($0.id):\($0.status)" }
+        store.rows.map { "\($0.id):\($0.attention.rawValue)" }
     }
 
     var body: some View {
@@ -75,7 +86,7 @@ struct ContentView: View {
                     ForEach(store.rows.prefix(Metrics.maxRows)) { row in
                         RowView(row: row, onSelect: onSelect)
                             .glassEffect(
-                                .regular.tint(row.glassTint).interactive(),
+                                glass(for: row.attention),
                                 in: .rect(cornerRadius: 18, style: .continuous)
                             )
                             .glassEffectID(row.id, in: glass)
@@ -90,40 +101,76 @@ struct ContentView: View {
             .frame(width: Metrics.contentWidth)
         }
         .padding(Metrics.inset)
+        // Rows own the tap; anything that actually travels becomes a window drag. Attached to
+        // the container so the whole panel stays draggable, not just the margins.
+        .simultaneousGesture(WindowDragGesture())
         .animation(.smooth(duration: 0.5, extraBounce: 0.18), value: shape)
         .contextMenu {
             Button("Quit cursed", action: onQuit)
         }
     }
-}
 
-private extension Store.Row {
-    var glassTint: Color { status.glassTint }
+    private func glass(for attention: Attention) -> Glass {
+        guard let tint = attention.glassTint else { return .clear.interactive() }
+        return .clear.tint(tint).interactive()
+    }
 }
 
 private struct RowView: View {
     let row: Store.Row
     var onSelect: (Store.Row) -> Void
 
-    private var detail: String {
-        guard let subtitle = row.subtitle, !subtitle.isEmpty else { return row.project }
-        return "\(row.project) · \(subtitle)"
-    }
+    /// Where on screen the press began. The panel travels with the pointer while it is being
+    /// dragged, so a view-local translation stays near zero and cannot tell a click from a drag.
+    /// Screen coordinates can.
+    @State private var pressOrigin: CGPoint?
+
+    /// Generous enough to absorb the wobble in a real click, far short of a deliberate reposition.
+    private static let dragSlop: CGFloat = 20
 
     var body: some View {
-        HStack(spacing: 11) {
-            StatusIndicator(status: row.status)
-                .frame(width: 12)
+        content
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        if pressOrigin == nil { pressOrigin = NSEvent.mouseLocation }
+                    }
+                    .onEnded { _ in
+                        let start = pressOrigin
+                        pressOrigin = nil
+                        guard let start else { return }
+                        let end = NSEvent.mouseLocation
+                        guard hypot(end.x - start.x, end.y - start.y) < Self.dragSlop else { return }
+                        onSelect(row)
+                    }
+            )
+            .help("\(row.project) — \(row.title)")
+    }
+
+    private var content: some View {
+        HStack(spacing: 9) {
+            // The gutter is reserved whether or not a dot is in it, so text stays on the same
+            // line down the panel and nothing shifts sideways when a run finishes.
+            Group {
+                if row.attention == .unseen {
+                    Circle().fill(Attention.dotColor)
+                }
+            }
+            .frame(width: 7, height: 7)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(row.title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(row.status.isActive ? .primary : .secondary)
+                // The project reads as an eyebrow above the title: smaller, so it stays
+                // subordinate, but weighted and opaque enough to actually be read at a glance.
+                Text(row.project)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.primary.opacity(row.attention.projectOpacity))
                     .lineLimit(1)
                     .truncationMode(.tail)
-                Text(detail)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
+
+                Text(row.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary.opacity(row.attention.titleOpacity))
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
@@ -133,15 +180,13 @@ private struct RowView: View {
             Text(Format.duration(row.duration))
                 .font(.system(size: 12.5, weight: .semibold, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(row.status == .running ? AnyShapeStyle(row.status.tint) : AnyShapeStyle(.secondary))
+                .foregroundStyle(.primary.opacity(row.attention.timeOpacity))
                 .contentTransition(.numericText())
         }
-        .padding(.leading, 15)
+        .padding(.leading, 14)
         .padding(.trailing, 16)
         .frame(height: Metrics.rowHeight)
         .contentShape(Rectangle())
-        .onTapGesture { onSelect(row) }
-        .help(detail)
     }
 }
 
@@ -152,7 +197,7 @@ private struct EmptyPill: View {
             .foregroundStyle(.secondary)
             .frame(height: Metrics.emptyHeight)
             .frame(maxWidth: .infinity)
-            .glassEffect(.regular, in: .capsule)
+            .glassEffect(.clear, in: .capsule)
     }
 }
 
@@ -166,58 +211,6 @@ private struct OverflowPill: View {
             .frame(height: Metrics.overflowHeight)
             .frame(maxWidth: .infinity)
             .glassEffect(.clear, in: .capsule)
-    }
-}
-
-private struct StatusIndicator: View {
-    let status: TurnStatus
-
-    var body: some View {
-        switch status {
-        case .running:
-            PulsingDot(color: status.tint, diameter: 8)
-                .frame(width: 8, height: 8)
-        case .stalled:
-            Circle()
-                .strokeBorder(status.tint, lineWidth: 1.8)
-                .frame(width: 9, height: 9)
-        case .done(let success):
-            Image(systemName: success ? "checkmark" : "xmark")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(status.tint)
-        }
-    }
-}
-
-/// A dot that breathes while a run is in flight.
-///
-/// Deliberately not a SwiftUI `repeatForever` animation: that re-evaluates the view every
-/// frame and measured at ~5% of a core for a window meant to sit there all day. A Core
-/// Animation layer animation is handed to the render server and costs the app nothing.
-private struct PulsingDot: NSViewRepresentable {
-    let color: Color
-    let diameter: CGFloat
-
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: diameter, height: diameter))
-        view.wantsLayer = true
-        guard let layer = view.layer else { return view }
-        layer.backgroundColor = NSColor(color).cgColor
-        layer.cornerRadius = diameter / 2
-
-        let pulse = CABasicAnimation(keyPath: "opacity")
-        pulse.fromValue = 1.0
-        pulse.toValue = 0.28
-        pulse.duration = 0.75
-        pulse.autoreverses = true
-        pulse.repeatCount = .infinity
-        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        layer.add(pulse, forKey: "pulse")
-        return view
-    }
-
-    func updateNSView(_ view: NSView, context: Context) {
-        view.layer?.backgroundColor = NSColor(color).cgColor
     }
 }
 

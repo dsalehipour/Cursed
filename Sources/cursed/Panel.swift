@@ -28,7 +28,10 @@ final class FloatingPanel: NSPanel {
         // Above normal and floating windows, but below the menu bar and system alerts.
         level = .statusBar
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-        isMovableByWindowBackground = true
+        // Dragging is handled by a WindowDragGesture in the content instead. AppKit's background
+        // drag starts on any movement at all, so it ate clicks that drifted by a few points —
+        // which is most of them, on targets this small.
+        isMovableByWindowBackground = false
         isOpaque = false
         // The window contributes nothing visually: every pixel comes from the Liquid Glass
         // shapes inside it. Its own shadow is switched off so it cannot trail behind them
