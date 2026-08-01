@@ -106,6 +106,13 @@ From `composerHeaders`, `lastUpdatedAt` is when the most recent run began and `c
 is a heartbeat written while a conversation is live, which doubles as the finish time of a
 completed run and as the liveness check behind the stalled state.
 
+Both are needed, because the heartbeat is not written until a run is already underway. For the
+first moments of a run the checkpoint still belongs to the *previous* turn, so a conversation you
+have not touched since this morning starts its next run carrying a heartbeat hours old. Judging
+liveness by the checkpoint alone therefore reports a run that began seconds ago as stalled, and
+then hides it for being stale — the panel goes blank at precisely the moment you start work.
+Liveness is measured from whichever of the two is later, and the query window considers both.
+
 Everything is opened read-only, so Cursor never contends with this app for a write lock.
 
 ### What was tried first, and why it was dropped
@@ -147,6 +154,16 @@ swift run cursed --demo     # show one row per state, for judging the design
 
 `--snapshot <path>` renders the panel's own view to a PNG. Note that it cannot capture Liquid
 Glass, which the window server composites out of process, so it only shows plain content.
+
+Setting `CURSED_DB` points the reader at another database, which is how the timing-dependent
+states get tested without waiting hours for one to occur naturally:
+
+```bash
+CURSED_DB=/tmp/fixture.vscdb swift run cursed --list
+```
+
+`--list` derives its verdict from the same code the panel uses, so it can be trusted to explain
+what the panel is showing rather than offering a second opinion.
 
 Logs go to `~/Library/Logs/cursed.log`, including a line each time a run finishes.
 

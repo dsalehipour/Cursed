@@ -29,17 +29,37 @@ struct ConversationSnapshot {
         guard let workspacePath, !workspacePath.isEmpty else { return "home" }
         return (workspacePath as NSString).lastPathComponent
     }
+
+    /// The most recent evidence that this conversation is alive.
+    ///
+    /// A run that has only just begun has not written a heartbeat yet, so `checkpoint` still
+    /// belongs to the previous turn and can be hours old. Judging quiet time by the checkpoint
+    /// alone therefore reports a run that started seconds ago as stalled.
+    var lastSignOfLife: Date {
+        guard let unfinishedRunAt else { return checkpoint }
+        return max(checkpoint, unfinishedRunAt)
+    }
 }
 
 final class CursorDB {
     private var handle: OpaquePointer?
     private var statement: OpaquePointer?
 
-    private static let path = NSHomeDirectory()
-        + "/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
+    /// `CURSED_DB` points the reader at a different database, which is how the timing-dependent
+    /// states can be reproduced on demand rather than waited for.
+    private static var path: String {
+        ProcessInfo.processInfo.environment["CURSED_DB"]
+            ?? NSHomeDirectory() + "/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
+    }
 
-    /// Restricting by checkpoint keeps the join from touching more than a handful of the
-    /// (large) conversation blobs, which is what keeps each poll in the low milliseconds.
+    /// Restricting by time keeps the join from touching more than a handful of the (large)
+    /// conversation blobs, which is what keeps each poll in the low milliseconds.
+    ///
+    /// Both timestamps have to be considered. `checkpointAt` is the heartbeat, but it is not
+    /// written until a run is underway, so a conversation that has been idle for longer than the
+    /// window would stay invisible for the first moments of its next run — exactly when you are
+    /// most likely to be looking. `lastUpdatedAt` is set the instant a run starts and closes
+    /// that gap.
     private static let sql = """
         SELECT h.composerId,
                json_extract(h.value, '$.name'),
@@ -53,8 +73,8 @@ final class CursorDB {
         JOIN cursorDiskKV d ON d.key = 'composerData:' || h.composerId
         WHERE h.isArchived = 0
           AND h.isSubagent = 0
-          AND h.checkpointAt > ?
-        ORDER BY h.checkpointAt DESC
+          AND (h.checkpointAt > ?1 OR h.lastUpdatedAt > ?1)
+        ORDER BY MAX(h.checkpointAt, h.lastUpdatedAt) DESC
         LIMIT 40
         """
 

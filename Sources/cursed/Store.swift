@@ -52,7 +52,7 @@ final class Store: ObservableObject {
     private let doneVisibility: TimeInterval = 30 * 60
     /// An open run whose heartbeat is older than this is reported as stalled. The heartbeat can
     /// legitimately lag by up to a minute, so this is deliberately well clear of that.
-    private let stallThreshold: TimeInterval = 4 * 60
+    nonisolated static let stallThreshold: TimeInterval = 4 * 60
     /// Stalled runs are abandoned rather than pending once they go this cold.
     private let stalledVisibility: TimeInterval = 30 * 60
     /// Only conversations changed this recently are even considered.
@@ -124,7 +124,7 @@ final class Store: ObservableObject {
             case .running:
                 break
             case .stalled:
-                if now.timeIntervalSince(snapshot.checkpoint) > stalledVisibility { continue }
+                if now.timeIntervalSince(snapshot.lastSignOfLife) > stalledVisibility { continue }
             case .done:
                 if now.timeIntervalSince(snapshot.checkpoint) > doneVisibility { continue }
                 justFinished = activeIDs.contains(snapshot.id)
@@ -154,11 +154,17 @@ final class Store: ObservableObject {
         }
     }
 
-    private func status(for snapshot: ConversationSnapshot, now: Date) -> TurnStatus {
+    /// Shared with `--list` so the diagnostic can never disagree with the panel.
+    nonisolated static func status(for snapshot: ConversationSnapshot, now: Date,
+                                   stallAfter: TimeInterval) -> TurnStatus {
         guard snapshot.unfinishedRunAt != nil else {
             return .done(success: snapshot.status == "completed")
         }
-        return now.timeIntervalSince(snapshot.checkpoint) > stallThreshold ? .stalled : .running
+        return now.timeIntervalSince(snapshot.lastSignOfLife) > stallAfter ? .stalled : .running
+    }
+
+    private func status(for snapshot: ConversationSnapshot, now: Date) -> TurnStatus {
+        Self.status(for: snapshot, now: now, stallAfter: Self.stallThreshold)
     }
 
     /// A finished run is worth marking only while it is plausibly still news. An aborted one

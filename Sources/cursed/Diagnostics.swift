@@ -17,24 +17,31 @@ enum Diagnostics {
             return
         }
 
-        print(line("STATUS", "TITLE", "PROJECT", "ELAPSED", "ACTIVITY"))
+        print(line("STATUS", "TITLE", "PROJECT", "ELAPSED", "QUIET", "ACTIVITY"))
         for snapshot in snapshots {
-            let status: String
+            // Deliberately the panel's own derivation rather than a second copy of it, so this
+            // can be trusted to explain what the panel is doing.
+            let status = Store.status(for: snapshot, now: now, stallAfter: Store.stallThreshold)
+            let label: String
             let elapsed: TimeInterval
-            if let start = snapshot.unfinishedRunAt {
-                let quiet = now.timeIntervalSince(snapshot.checkpoint)
-                status = quiet > 4 * 60 ? "STALLED" : "RUNNING"
-                elapsed = now.timeIntervalSince(start)
-            } else {
-                status = snapshot.status == "completed" ? "done" : snapshot.status
+            switch status {
+            case .running:
+                label = "RUNNING"
+                elapsed = now.timeIntervalSince(snapshot.unfinishedRunAt ?? now)
+            case .stalled:
+                label = "STALLED"
+                elapsed = now.timeIntervalSince(snapshot.unfinishedRunAt ?? now)
+            case .done(let completed):
+                label = completed ? "done" : "aborted"
                 elapsed = max(0, snapshot.checkpoint.timeIntervalSince(snapshot.lastRunStart))
             }
             print(line(
-                status,
+                label,
                 String(snapshot.name.prefix(31)),
                 snapshot.project,
                 Format.duration(elapsed),
-                String((snapshot.subtitle ?? "").prefix(38))
+                Format.duration(now.timeIntervalSince(snapshot.lastSignOfLife)),
+                String((snapshot.subtitle ?? "").prefix(30))
             ))
         }
     }
@@ -56,8 +63,9 @@ enum Diagnostics {
     }
 
     private static func line(_ status: String, _ title: String, _ project: String,
-                             _ elapsed: String, _ activity: String) -> String {
-        pad(status, 9) + pad(title, 33) + pad(project, 20) + pad(elapsed, 10) + activity
+                             _ elapsed: String, _ quiet: String, _ activity: String) -> String {
+        pad(status, 9) + pad(title, 33) + pad(project, 18) + pad(elapsed, 10)
+            + pad(quiet, 9) + activity
     }
 
     private static func pad(_ text: String, _ width: Int) -> String {
