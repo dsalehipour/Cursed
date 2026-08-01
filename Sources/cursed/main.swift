@@ -1,0 +1,20 @@
+import AppKit
+
+if CommandLine.arguments.contains("--list") {
+    Diagnostics.list()
+    exit(0)
+}
+
+if CommandLine.arguments.contains("--bench") {
+    Diagnostics.bench()
+    exit(0)
+}
+
+let app = NSApplication.shared
+// Agent apps have no Dock icon and no menu bar, which is what lets the panel behave as a HUD.
+app.setActivationPolicy(.accessory)
+
+// Top-level code already runs on the main thread; this just states that to the compiler.
+let delegate = MainActor.assumeIsolated { AppDelegate() }
+app.delegate = delegate
+app.run()
