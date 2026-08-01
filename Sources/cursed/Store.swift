@@ -57,6 +57,28 @@ final class Store: ObservableObject {
         schedule(interval: pollInterval)
     }
 
+    /// Fills the panel with one row per state, for judging the design without waiting for real
+    /// runs to reach each state.
+    func startDemo() {
+        let now = Date()
+        rows = [
+            Row(id: "1", title: "Refactor payments pipeline", project: "utilityprofit",
+                status: .running, duration: 1_337, lastActivity: now,
+                subtitle: "Edited charge.ts, ledger.ts", flashUntil: nil),
+            Row(id: "2", title: "Cursor app status window", project: "cursed",
+                status: .running, duration: 92, lastActivity: now,
+                subtitle: "Edited ContentView.swift", flashUntil: nil),
+            Row(id: "3", title: "Ask page submission lag", project: "the-architect",
+                status: .stalled, duration: 3_355, lastActivity: now, subtitle: nil, flashUntil: nil),
+            Row(id: "4", title: "Structured thinking UI", project: "the-architect",
+                status: .done(success: true), duration: 781, lastActivity: now,
+                subtitle: nil, flashUntil: nil),
+            Row(id: "5", title: "Bulk tenant upload inquiry", project: "utilityprofit",
+                status: .done(success: false), duration: 148, lastActivity: now,
+                subtitle: nil, flashUntil: nil),
+        ]
+    }
+
     private var pollInterval: TimeInterval {
         rows.contains { $0.status.isActive } ? 1 : 3
     }

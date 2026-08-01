@@ -19,7 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             onQuit: { NSApp.terminate(nil) }
         )
 
-        let size = NSSize(width: Metrics.width, height: Metrics.height(rowCount: 0))
+        let size = NSSize(width: Metrics.windowWidth, height: Metrics.windowHeight(rowCount: 0))
         panel = FloatingPanel(contentRect: NSRect(origin: .zero, size: size))
         panel.contentView = NSHostingView(rootView: content)
         panel.delegate = self
@@ -34,12 +34,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             .sink { [weak self] count in
                 guard let self else { return }
                 self.panel.resizeKeepingTopLeft(
-                    to: NSSize(width: Metrics.width, height: Metrics.height(rowCount: count))
+                    to: NSSize(
+                        width: Metrics.windowWidth,
+                        height: Metrics.windowHeight(rowCount: count)
+                    )
                 )
             }
             .store(in: &cancellables)
 
-        store.start()
+        if CommandLine.arguments.contains("--demo") {
+            store.startDemo()
+        } else {
+            store.start()
+        }
 
         if let index = CommandLine.arguments.firstIndex(of: "--snapshot"),
            index + 1 < CommandLine.arguments.count {
@@ -59,7 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func windowDidMove(_ notification: Notification) {
-        guard !isSnapshot else { return }
+        guard !isSnapshot, panel.isUserMove else { return }
         panel.savePosition()
     }
 

@@ -5,7 +5,14 @@ import AppKit
 /// `.nonactivatingPanel` is what makes it usable while you work: clicking a row does not
 /// activate this app, so whatever you were typing in keeps its keyboard focus.
 final class FloatingPanel: NSPanel {
-    private static let originKey = "panelOrigin"
+    /// Stored as the top-left corner rather than the AppKit origin, so the window stays visually
+    /// anchored while its height changes with the number of rows.
+    private static let topLeftKey = "panelTopLeft"
+
+    /// Resizing moves the origin, which fires the same notification a user drag does. This
+    /// distinguishes the two so only a real drag is remembered.
+    private var isAdjustingFrame = false
+    var isUserMove: Bool { !isAdjustingFrame }
 
     init(contentRect: NSRect) {
         super.init(
@@ -22,13 +29,13 @@ final class FloatingPanel: NSPanel {
         level = .statusBar
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         isMovableByWindowBackground = true
-        backgroundColor = .clear
         isOpaque = false
-        hasShadow = true
-        animationBehavior = .utilityWindow
-        // A HUD that floats over arbitrary content reads better dark regardless of the
-        // system setting, the same way the system's own overlays do.
-        appearance = NSAppearance(named: .darkAqua)
+        // The window contributes nothing visually: every pixel comes from the Liquid Glass
+        // shapes inside it. Its own shadow is switched off so it cannot trail behind them
+        // as they morph.
+        backgroundColor = .clear
+        hasShadow = false
+        animationBehavior = .none
     }
 
     override var canBecomeKey: Bool { true }
@@ -39,29 +46,53 @@ final class FloatingPanel: NSPanel {
     func resizeKeepingTopLeft(to size: NSSize) {
         guard frame.size != size else { return }
         let topLeft = NSPoint(x: frame.minX, y: frame.maxY)
-        setFrame(
-            NSRect(x: topLeft.x, y: topLeft.y - size.height, width: size.width, height: size.height),
-            display: true
-        )
+        adjustingFrame {
+            setFrame(
+                NSRect(x: topLeft.x, y: topLeft.y - size.height, width: size.width, height: size.height),
+                display: true
+            )
+        }
     }
 
     func restorePosition(defaultSize: NSSize) {
-        let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        var origin = NSPoint(
-            x: screen.maxX - defaultSize.width - 20,
-            y: screen.maxY - defaultSize.height - 20
-        )
-        if let saved = UserDefaults.standard.string(forKey: Self.originKey) {
-            let point = NSPointFromString(saved)
-            // Ignore a saved position that no longer lands on an attached display.
-            if NSScreen.screens.contains(where: { $0.frame.intersects(NSRect(origin: point, size: defaultSize)) }) {
-                origin = point
-            }
+        let topLeft = savedTopLeft(for: defaultSize) ?? defaultTopLeft(for: defaultSize)
+        adjustingFrame {
+            setFrame(
+                NSRect(x: topLeft.x, y: topLeft.y - defaultSize.height,
+                       width: defaultSize.width, height: defaultSize.height),
+                display: false
+            )
         }
-        setFrame(NSRect(origin: origin, size: defaultSize), display: false)
     }
 
     func savePosition() {
-        UserDefaults.standard.set(NSStringFromPoint(frame.origin), forKey: Self.originKey)
+        let topLeft = NSPoint(x: frame.minX, y: frame.maxY)
+        UserDefaults.standard.set(NSStringFromPoint(topLeft), forKey: Self.topLeftKey)
+    }
+
+    private func savedTopLeft(for size: NSSize) -> NSPoint? {
+        guard let saved = UserDefaults.standard.string(forKey: Self.topLeftKey) else { return nil }
+        let topLeft = NSPointFromString(saved)
+        let rect = NSRect(x: topLeft.x, y: topLeft.y - size.height, width: size.width, height: size.height)
+        // Require the whole window to be on one display, so a disconnected monitor or a stale
+        // value can never strand it half (or entirely) off screen.
+        guard NSScreen.screens.contains(where: { $0.visibleFrame.contains(rect) }) else { return nil }
+        return topLeft
+    }
+
+    /// Top-right of the primary display. Deliberately not `NSScreen.main`, which follows keyboard
+    /// focus and would put the window on a different display depending on what was active.
+    private func defaultTopLeft(for size: NSSize) -> NSPoint {
+        let screen = NSScreen.screens.first?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        return NSPoint(x: screen.maxX - size.width - 16, y: screen.maxY - 16)
+    }
+
+    /// Marks a frame change as ours. Cleared on the next turn of the run loop because the move
+    /// notification can arrive after `setFrame` returns.
+    private func adjustingFrame(_ body: () -> Void) {
+        isAdjustingFrame = true
+        body()
+        DispatchQueue.main.async { [weak self] in self?.isAdjustingFrame = false }
     }
 }

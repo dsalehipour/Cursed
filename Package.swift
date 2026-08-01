@@ -3,7 +3,9 @@ import PackageDescription
 
 let package = Package(
     name: "cursed",
-    platforms: [.macOS(.v14)],
+    // Liquid Glass (GlassEffectContainer, glassEffect, morphing transitions) is macOS 26.
+    // Spelled as a string because this toolchain's PackageDescription predates `.v26`.
+    platforms: [.macOS("26.0")],
     targets: [
         .executableTarget(
             name: "cursed",

@@ -15,8 +15,14 @@ doing, and how long they have been at it.
 └────────────────────────────────────────────┘
 ```
 
-Native Swift, no dock icon, floats above other apps including full-screen ones, and never
-takes keyboard focus when you click it.
+Native Swift built on macOS 26 Liquid Glass, no dock icon, floats above other apps including
+full-screen ones, and never takes keyboard focus when you click it.
+
+The window itself draws nothing. Each row is its own Liquid Glass shape inside a
+`GlassEffectContainer`, spaced closely enough that they merge into a single continuous surface
+and then fluidly separate and reflow as runs start and finish. State is carried by a faint tint
+in the glass rather than by borders or labels, kept subtle because neighbouring rows blend where
+they meet.
 
 ## Build and run
 
@@ -96,7 +102,7 @@ It is meant to sit on screen all day, so cost was measured rather than assumed:
 | | CPU (one core) |
 | --- | --- |
 | Database poll, 200 iterations | 0.26 ms each — 0.03% at 1 Hz |
-| Whole app, tracking two live runs | **~1%** |
+| Whole app, tracking two live runs | **~0.5%** |
 
 Polling drops from 1 s to 3 s when nothing is running, and the query is bounded to
 conversations touched in the last two hours so it never reads more than a handful of blobs.
@@ -110,10 +116,11 @@ measured **5.9% of a core**, versus 0.97% for the same animation driven by the r
 ```bash
 swift run cursed --list     # print current conversation state and exit
 swift run cursed --bench    # time the database poll
+swift run cursed --demo     # show one row per state, for judging the design
 ```
 
-`--snapshot <path>` renders the panel's own view to a PNG, which is handy for checking layout
-without Screen Recording permission.
+`--snapshot <path>` renders the panel's own view to a PNG. Note that it cannot capture Liquid
+Glass, which the window server composites out of process, so it only shows plain content.
 
 Logs go to `~/Library/Logs/cursed.log`, including a line each time a run finishes.
 
