@@ -83,12 +83,13 @@ final class FloatingPanel: NSPanel {
         return topLeft
     }
 
-    /// Top-right of the primary display. Deliberately not `NSScreen.main`, which follows keyboard
-    /// focus and would put the window on a different display depending on what was active.
+    /// Centred along the top of the primary display. Deliberately not `NSScreen.main`, which
+    /// follows keyboard focus and would put the window on a different display depending on what
+    /// was active.
     private func defaultTopLeft(for size: NSSize) -> NSPoint {
         let screen = NSScreen.screens.first?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        return NSPoint(x: screen.maxX - size.width - 16, y: screen.maxY - 16)
+        return NSPoint(x: (screen.midX - size.width / 2).rounded(), y: screen.maxY - 16)
     }
 
     /// Marks a frame change as ours. Cleared on the next turn of the run loop because the move
