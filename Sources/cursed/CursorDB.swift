@@ -48,6 +48,7 @@ final class CursorDB {
     private var handle: OpaquePointer?
     private var statement: OpaquePointer?
     private var selectionStatement: OpaquePointer?
+    private var interactionStatement: OpaquePointer?
 
     /// `CURSED_DB` points the reader at a different database, which is how the timing-dependent
     /// states can be reproduced on demand rather than waited for.
@@ -80,6 +81,30 @@ final class CursorDB {
           AND (h.checkpointAt > ?1 OR h.lastUpdatedAt > ?1)
         ORDER BY MAX(h.checkpointAt, h.lastUpdatedAt) DESC
         LIMIT 40
+        """
+
+    /// When you last said something in a conversation, which is not the same as when it last did
+    /// something, nor as when its current run began.
+    ///
+    /// Two things count, and they are recorded very differently. A message you typed is its own
+    /// entry, `type: 1`. An answer to one of Cursor's in-chat questions is not an entry at all:
+    /// the question's tool call is simply marked answered in place, keeping the `createdAt` of
+    /// the moment it was *asked*, which can be many minutes before you got to it. The entry
+    /// immediately after an `askQuestionToolCall` is the nearest thing to a record of your reply,
+    /// since the model resumes the instant it has one, and it lands within a second or two.
+    ///
+    /// `LAG` is what makes that a single pass: it puts each entry next to the one before it, so
+    /// "the entry after a question" is a plain `WHERE` rather than a second walk of the history.
+    private static let interactionSQL = """
+        SELECT CAST(strftime('%s', MAX(CASE WHEN t.type = 1 OR t.prevCase = 'askQuestionToolCall'
+                                            THEN t.createdAt END)) AS INTEGER) * 1000
+        FROM (SELECT json_extract(je.value, '$.type') AS type,
+                     json_extract(je.value, '$.createdAt') AS createdAt,
+                     LAG(json_extract(je.value, '$.grouping.toolCallCase'))
+                       OVER (ORDER BY je.key) AS prevCase
+              FROM cursorDiskKV d,
+                   json_each(json_extract(d.value, '$.fullConversationHeadersOnly')) je
+              WHERE d.key = 'composerData:' || ?1) t
         """
 
     /// Cursor records the chat you have open here and rewrites it the moment you switch, which
@@ -122,18 +147,28 @@ final class CursorDB {
             selection = nil
         }
 
+        var interaction: OpaquePointer?
+        if sqlite3_prepare_v2(db, Self.interactionSQL, -1, &interaction, nil) != SQLITE_OK {
+            Log.write("last-interaction lookup unavailable; timers will count from the run start")
+            sqlite3_finalize(interaction)
+            interaction = nil
+        }
+
         handle = db
         statement = stmt
         selectionStatement = selection
+        interactionStatement = interaction
         return true
     }
 
     func close() {
         sqlite3_finalize(statement)
         sqlite3_finalize(selectionStatement)
+        sqlite3_finalize(interactionStatement)
         sqlite3_close(handle)
         statement = nil
         selectionStatement = nil
+        interactionStatement = nil
         handle = nil
     }
 
@@ -184,6 +219,21 @@ final class CursorDB {
         guard sqlite3_step(selectionStatement) == SQLITE_ROW else { return nil }
         return text(selectionStatement, 0)
     }
+
+    /// Costs roughly a hundred times what the main poll does, because it walks every entry in the
+    /// conversation's history rather than reading a few columns. Callers are meant to keep the
+    /// answer rather than ask again each second: it moves only when you do.
+    func lastInteraction(with id: String) -> Date? {
+        guard open(), let interactionStatement else { return nil }
+        sqlite3_reset(interactionStatement)
+        defer { sqlite3_reset(interactionStatement) }
+        sqlite3_bind_text(interactionStatement, 1, id, -1, Self.transient)
+        guard sqlite3_step(interactionStatement) == SQLITE_ROW else { return nil }
+        return date(interactionStatement, 0)
+    }
+
+    /// SQLite must copy the bound string: the Swift one is not guaranteed to outlive the call.
+    private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
     private func text(_ stmt: OpaquePointer, _ index: Int32) -> String? {
         guard sqlite3_column_type(stmt, index) != SQLITE_NULL,

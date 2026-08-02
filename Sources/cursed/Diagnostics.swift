@@ -35,7 +35,9 @@ enum Diagnostics {
             case .stalled: label = "STALLED"
             case .done(let completed): label = completed ? "done" : "aborted"
             }
-            let asked = now.timeIntervalSince(snapshot.unfinishedRunAt ?? snapshot.lastRunStart)
+            let spoke = db.lastInteraction(with: snapshot.id)
+                ?? snapshot.unfinishedRunAt ?? snapshot.lastRunStart
+            let asked = now.timeIntervalSince(spoke)
             print(line(
                 label,
                 String(snapshot.name.prefix(31)),
@@ -61,6 +63,17 @@ enum Diagnostics {
         print(String(format: "%d polls in %.3fs — %.2f ms each (%d rows/poll)",
                      iterations, elapsed, elapsed / Double(iterations) * 1000, rows / iterations))
         print(String(format: "at 1 poll/sec that is %.2f%% of one core", elapsed / Double(iterations) * 100))
+
+        // The timer's anchor is derived separately and costs far more, since it walks a whole
+        // conversation rather than reading columns. Timed here so the figure is visible rather
+        // than assumed: it is only paid when a live conversation may have moved on, at most once
+        // every few seconds each, not once per poll.
+        guard let sample = db.fetch(since: 2 * 60 * 60).first else { return }
+        let anchorStart = Date()
+        for _ in 0..<iterations { _ = db.lastInteraction(with: sample.id) }
+        let each = Date().timeIntervalSince(anchorStart) / Double(iterations) * 1000
+        print(String(format: "last-interaction lookup: %.2f ms each, for \"%@\"",
+                     each, sample.name as NSString))
     }
 
     private static func line(_ status: String, _ title: String, _ project: String,

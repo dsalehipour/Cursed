@@ -36,8 +36,8 @@ final class Store: ObservableObject {
         var project: String
         var status: TurnStatus
         var attention: Attention
-        /// How long ago you last sent a message here. Cursor begins a run the moment you send, so
-        /// while one is in flight this is also how long it has been going.
+        /// How long ago you last said anything here — a message you typed, or an answer you gave
+        /// to one of Cursor's in-chat questions.
         var sinceLastMessage: TimeInterval
         /// Last time Cursor touched the conversation; for a finished run this is when it ended.
         var lastActivity: Date
@@ -72,6 +72,20 @@ final class Store: ObservableObject {
     /// same reason as `lastViewed`: it is what lets the row come back when there is genuinely
     /// something new, rather than staying gone for good.
     private var dismissed: [String: Date] = [:]
+
+    /// When you last spoke in a conversation, remembered rather than re-derived. Working it out
+    /// walks the conversation's entire history, which is far too dear to repeat every second for
+    /// an answer that changes only when you type something or answer a question.
+    private struct Anchor {
+        let spokeAt: Date?
+        /// Re-derived when this moves, since a new run means you certainly said something.
+        let runStart: Date
+        let checkedAt: Date
+    }
+    private var anchors: [String: Anchor] = [:]
+    /// How stale a live conversation's anchor may get. An answer given mid-run surfaces within
+    /// this, which is well under the resolution anyone reads a minutes-scale timer at.
+    private let anchorRefresh: TimeInterval = 5
 
     var onFinished: ((Row) -> Void)?
 
@@ -171,6 +185,7 @@ final class Store: ObservableObject {
         // for as long as the app is running.
         let listed = Set(visible.map(\.id))
         lastViewed = lastViewed.filter { listed.contains($0.key) }
+        anchors = anchors.filter { listed.contains($0.key) }
         // Dismissals cannot be pruned against what is listed, since keeping the row out of that
         // list is the whole point. They expire by age instead: beyond the query window the
         // conversation is no longer fetched at all, and one that resumes has a newer run start
@@ -242,12 +257,7 @@ final class Store: ObservableObject {
     }
 
     private func row(_ snapshot: ConversationSnapshot, status: TurnStatus, now: Date) -> Row {
-        // Both fields are the moment a run began, which is the moment you sent the message that
-        // started it. `unfinishedRunAt` is definitionally that and is preferred while a run is in
-        // flight; `lastRunStart` is the same instant but survives the run ending, and is what
-        // keeps a finished row counting up from your message rather than freezing on how long
-        // the run happened to take.
-        let asked = snapshot.unfinishedRunAt ?? snapshot.lastRunStart
+        let asked = lastSpoke(in: snapshot, active: status.isActive, now: now)
         return Row(
             id: snapshot.id,
             title: snapshot.name,
@@ -258,6 +268,26 @@ final class Store: ObservableObject {
             sinceLastMessage: max(0, now.timeIntervalSince(asked)),
             lastActivity: snapshot.checkpoint
         )
+    }
+
+    /// The moment you last spoke in a conversation, which is what the row's timer counts from.
+    ///
+    /// The run's own start is only a stand-in for it. The two agree for a conversation you sent a
+    /// message to and left, but diverge in both directions: answering a question mid-run does not
+    /// start a new run, so the timer would sit on an hours-old figure minutes after you replied;
+    /// and `lastUpdatedAt` is nudged by things that are not you at all, which would have the
+    /// timer reset on a conversation you have not touched since yesterday. The stand-in is still
+    /// what a conversation too new or too odd to read falls back to.
+    private func lastSpoke(in snapshot: ConversationSnapshot, active: Bool, now: Date) -> Date {
+        let runStart = snapshot.unfinishedRunAt ?? snapshot.lastRunStart
+        if let cached = anchors[snapshot.id], cached.runStart == snapshot.lastRunStart,
+           !(active && now.timeIntervalSince(cached.checkedAt) > anchorRefresh) {
+            return cached.spokeAt ?? runStart
+        }
+        let spokeAt = db.lastInteraction(with: snapshot.id)
+        anchors[snapshot.id] = Anchor(spokeAt: spokeAt, runStart: snapshot.lastRunStart,
+                                      checkedAt: now)
+        return spokeAt ?? runStart
     }
 
     private func rank(_ status: TurnStatus) -> Int {

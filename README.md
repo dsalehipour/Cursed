@@ -55,11 +55,11 @@ There are three, and only one of them draws attention:
 | **Green dot** | It finished and you have not seen it. |
 | Light grey text, no dot | Old news. You read it in Cursor, you clicked it, you stopped it yourself, or it finished more than 10 minutes ago. |
 
-The time on the right is how long ago you last sent a message to that conversation, not how long
-its run took. Cursor starts a run the moment you send, so for anything in flight the two are the
-same number; the difference shows once a run ends, where a finished row keeps counting up from
-your message rather than freezing on however long the work happened to take. It answers "when did
-I last touch this", which is the question you have when several conversations are in the air.
+The time on the right is how long ago **you** last said something to that conversation — a message
+you typed, or an answer you gave one of Cursor's in-chat questions. It is not how long the run has
+been going, which is what Cursor's own sidebar shows, and not how long a finished run took. It
+answers "when did I last touch this", which is the question worth asking when several
+conversations are in the air and one of them has quietly been waiting on you.
 
 A completion plays a soft chime. Runs you aborted do not, on the grounds that you cannot have
 failed to notice something you stopped by hand. Finished conversations stay listed for 30
@@ -139,10 +139,27 @@ From `composerHeaders`, `lastUpdatedAt` is when the most recent run began and `c
 is a heartbeat written while a conversation is live, which doubles as the finish time of a
 completed run and as the liveness check behind the stalled state.
 
-`lastUpdatedAt` is also what the timer counts from, because a run begins the instant you send:
-checked against the last `type: 1` entry in the conversation's own `fullConversationHeadersOnly`
-list, the two agree to within two milliseconds. It is the better source of the pair, since
-`unfinishedRunAt` is cleared when the run ends and this survives it.
+### Working out when you last said something
+
+Neither of those is when *you* last spoke, which is what the timer counts from, and the difference
+is not academic. Answering an in-chat question does not start a new run, so a conversation you
+replied to two minutes ago still carries a run that began half an hour before — and `lastUpdatedAt`
+gets nudged by things that are not you at all, which has it read a few minutes old on a
+conversation last spoken to yesterday. It is wrong in both directions.
+
+The conversation's own `fullConversationHeadersOnly` list has the answer, one entry per message
+and tool call. Two things in it count:
+
+- **`type: 1`** is a message you typed, and carries the `createdAt` you sent it.
+- **an entry immediately after an `askQuestionToolCall`** dates an answer you gave. Answering
+  leaves no entry of its own — the question's tool call is marked answered in place, keeping the
+  `createdAt` of when it was *asked*, which can be many minutes earlier. The model resumes the
+  instant it has your answer, so the next entry lands within a second or two of your click.
+
+The latest of those is the timer's anchor. One `LAG` window function gets both in a single pass,
+but it still walks the whole history: 6ms for a conversation of 2,700 entries, against 1ms for an
+entire poll. So it is cached and re-derived only when a live conversation may have moved on, at
+most every five seconds each, which keeps the app at 0.1% of a core.
 
 Both are needed, because the heartbeat is not written until a run is already underway. For the
 first moments of a run the checkpoint still belongs to the *previous* turn, so a conversation you
