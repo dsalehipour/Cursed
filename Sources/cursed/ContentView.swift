@@ -66,6 +66,7 @@ extension Attention {
 struct ContentView: View {
     @ObservedObject var store: Store
     var onSelect: (Store.Row) -> Void
+    var onDismiss: (Store.Row) -> Void
     var onQuit: () -> Void
 
     @Namespace private var glass
@@ -84,7 +85,7 @@ struct ContentView: View {
                         .glassEffectID("empty", in: glass)
                 } else {
                     ForEach(store.rows.prefix(Metrics.maxRows)) { row in
-                        RowView(row: row, onSelect: onSelect)
+                        RowView(row: row, onSelect: onSelect, onDismiss: onDismiss, onQuit: onQuit)
                             .glassEffect(
                                 glass(for: row.attention),
                                 in: .rect(cornerRadius: 18, style: .continuous)
@@ -119,6 +120,8 @@ struct ContentView: View {
 private struct RowView: View {
     let row: Store.Row
     var onSelect: (Store.Row) -> Void
+    var onDismiss: (Store.Row) -> Void
+    var onQuit: () -> Void
 
     /// Where on screen the press began. The panel travels with the pointer while it is being
     /// dragged, so a view-local translation stays near zero and cannot tell a click from a drag.
@@ -145,6 +148,13 @@ private struct RowView: View {
                         onSelect(row)
                     }
             )
+            // Rows have their own menu, so Quit is repeated here: at a full panel there is
+            // barely any bare surface left to right-click for the container's version.
+            .contextMenu {
+                Button("Dismiss") { onDismiss(row) }
+                Divider()
+                Button("Quit cursed", action: onQuit)
+            }
             .help("\(row.project) — \(row.title)")
     }
 

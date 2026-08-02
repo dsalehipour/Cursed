@@ -44,6 +44,7 @@ struct ConversationSnapshot {
 final class CursorDB {
     private var handle: OpaquePointer?
     private var statement: OpaquePointer?
+    private var selectionStatement: OpaquePointer?
 
     /// `CURSED_DB` points the reader at a different database, which is how the timing-dependent
     /// states can be reproduced on demand rather than waited for.
@@ -78,6 +79,14 @@ final class CursorDB {
         LIMIT 40
         """
 
+    /// Cursor records the chat you have open here and rewrites it the moment you switch, which
+    /// makes "are you looking at this one" a lookup rather than an inference. The value is the
+    /// bare conversation id, and it is global rather than per-window: with several windows open
+    /// it names the last chat you selected in any of them.
+    private static let selectionSQL = """
+        SELECT value FROM ItemTable WHERE key = 'cursor/glass.selectedAgent'
+        """
+
     var isOpen: Bool { handle != nil }
 
     @discardableResult
@@ -100,15 +109,28 @@ final class CursorDB {
             return false
         }
 
+        // Prepared separately and allowed to fail: reading which chat is on screen is a
+        // convenience, and losing it to a schema change should cost the auto-acknowledge rather
+        // than the whole panel.
+        var selection: OpaquePointer?
+        if sqlite3_prepare_v2(db, Self.selectionSQL, -1, &selection, nil) != SQLITE_OK {
+            Log.write("selected-conversation lookup unavailable; rows will need a click")
+            sqlite3_finalize(selection)
+            selection = nil
+        }
+
         handle = db
         statement = stmt
+        selectionStatement = selection
         return true
     }
 
     func close() {
         sqlite3_finalize(statement)
+        sqlite3_finalize(selectionStatement)
         sqlite3_close(handle)
         statement = nil
+        selectionStatement = nil
         handle = nil
     }
 
@@ -148,6 +170,16 @@ final class CursorDB {
             return []
         }
         return results
+    }
+
+    /// The conversation on screen in Cursor, whether or not Cursor is the app you are actually
+    /// looking at. Callers pair it with a frontmost check to decide if it has really been seen.
+    func selectedConversationID() -> String? {
+        guard open(), let selectionStatement else { return nil }
+        sqlite3_reset(selectionStatement)
+        defer { sqlite3_reset(selectionStatement) }
+        guard sqlite3_step(selectionStatement) == SQLITE_ROW else { return nil }
+        return text(selectionStatement, 0)
     }
 
     private func text(_ stmt: OpaquePointer, _ index: Int32) -> String? {

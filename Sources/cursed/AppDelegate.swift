@@ -20,6 +20,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self?.log("reveal \(row.project): \(row.title)")
                 CursorLink.reveal(project: row.project)
             },
+            onDismiss: { [weak self] row in
+                self?.log("dismissed \(row.project): \(row.title)")
+                self?.store.dismiss(row.id)
+            },
             onQuit: { NSApp.terminate(nil) }
         )
 

@@ -17,6 +17,13 @@ enum Diagnostics {
             return
         }
 
+        // The conversation Cursor has open clears its own dot, so naming it here explains why a
+        // finished run might never show one.
+        if let selected = db.selectedConversationID() {
+            print("on screen in Cursor: \(snapshots.first { $0.id == selected }?.name ?? selected)")
+            print("")
+        }
+
         print(line("STATUS", "TITLE", "PROJECT", "ELAPSED", "QUIET", "ACTIVITY"))
         for snapshot in snapshots {
             // Deliberately the panel's own derivation rather than a second copy of it, so this

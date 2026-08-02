@@ -61,7 +61,16 @@ final class Store: ObservableObject {
     private let db = CursorDB()
     private var timer: Timer?
     private var activeIDs: Set<String> = []
-    private var acknowledged: Set<String> = []
+    /// When each conversation was last in front of you. A timestamp rather than a flag, because
+    /// having seen a conversation only means anything relative to when it finished: glance at a
+    /// run, walk away, and the completion that lands afterwards is still news.
+    private var lastViewed: [String: Date] = [:]
+    /// Only so the log records switching chats rather than every poll spent reading one.
+    private var lastNoted: String?
+    /// Conversations you have waved off, against the moment you did it. Keyed by time for the
+    /// same reason as `lastViewed`: it is what lets the row come back when there is genuinely
+    /// something new, rather than staying gone for good.
+    private var dismissed: [String: Date] = [:]
 
     var onFinished: ((Row) -> Void)?
 
@@ -73,7 +82,18 @@ final class Store: ObservableObject {
     /// Clicking a row is as clear a statement as there is that you have seen it, so the dot goes
     /// straight away rather than waiting out the notice window.
     func acknowledge(_ id: String) {
-        guard acknowledged.insert(id).inserted else { return }
+        lastViewed[id] = Date()
+        poll()
+    }
+
+    /// Drops a row from the panel until its conversation next starts a run.
+    ///
+    /// Measured against the run's start rather than its heartbeat, so dismissing something that
+    /// is still going hides it for the rest of that run instead of having it reappear a second
+    /// later on the next beat. Saying "not interested in this one" should stick until the
+    /// conversation does something genuinely new.
+    func dismiss(_ id: String) {
+        dismissed[id] = Date()
         poll()
     }
 
@@ -111,6 +131,9 @@ final class Store: ObservableObject {
     private func poll() {
         let now = Date()
         let snapshots = db.fetch(since: queryWindow, now: now)
+        // Before the rows are built, so a conversation you are reading right now is already
+        // marked seen by the time this poll decides whether to give it a dot.
+        noteConversationOnScreen(now: now, in: snapshots)
 
         var visible: [Row] = []
         var stillActive: Set<String> = []
@@ -118,6 +141,8 @@ final class Store: ObservableObject {
         for snapshot in snapshots {
             let status = status(for: snapshot, now: now)
             if status.isActive { stillActive.insert(snapshot.id) }
+            // Ahead of the chime as well as the row, so something you have waved off stays quiet.
+            if let waved = dismissed[snapshot.id], snapshot.lastRunStart <= waved { continue }
             var justFinished = false
 
             switch status {
@@ -136,9 +161,15 @@ final class Store: ObservableObject {
         }
 
         activeIDs = stillActive
-        // Acknowledgements only matter while the row is on screen; drop the rest so the set
-        // cannot grow for as long as the app is running.
-        acknowledged.formIntersection(visible.map(\.id))
+        // View times only matter while the row is listed; drop the rest so the map cannot grow
+        // for as long as the app is running.
+        let listed = Set(visible.map(\.id))
+        lastViewed = lastViewed.filter { listed.contains($0.key) }
+        // Dismissals cannot be pruned against what is listed, since keeping the row out of that
+        // list is the whole point. They expire by age instead: beyond the query window the
+        // conversation is no longer fetched at all, and one that resumes has a newer run start
+        // and is showing again regardless.
+        dismissed = dismissed.filter { now.timeIntervalSince($0.value) <= queryWindow }
 
         let wasActive = rows.contains { $0.status.isActive }
         rows = visible.sorted { a, b in
@@ -167,6 +198,25 @@ final class Store: ObservableObject {
         Self.status(for: snapshot, now: now, stallAfter: Self.stallThreshold)
     }
 
+    /// Reading a conversation in Cursor is as good as clicking its row, so the dot clears itself
+    /// rather than asking you to dismiss something you have already dealt with.
+    ///
+    /// Both halves are needed. The database names the chat that is on screen, but says nothing
+    /// about whether you are looking at it: that chat stays selected while Cursor sits behind
+    /// your browser, and marking it seen then would clear dots for runs you never saw.
+    private func noteConversationOnScreen(now: Date, in snapshots: [ConversationSnapshot]) {
+        guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == CursorLink.bundleID,
+              let id = db.selectedConversationID() else { return }
+        lastViewed[id] = now
+
+        // Logged on change only: this runs every poll for as long as Cursor is in front. Named
+        // from the snapshots rather than the rows, which are still empty on the first poll.
+        if id != lastNoted {
+            lastNoted = id
+            Log.write("reading \(snapshots.first { $0.id == id }?.name ?? id)")
+        }
+    }
+
     /// A finished run is worth marking only while it is plausibly still news. An aborted one
     /// never is: you stopped it yourself, so you already know.
     private func attention(for status: TurnStatus, id: String,
@@ -175,8 +225,10 @@ final class Store: ObservableObject {
         case .running, .stalled:
             return .working
         case .done(let success):
-            guard success, !acknowledged.contains(id),
-                  now.timeIntervalSince(finishedAt) <= noticeWindow else { return .settled }
+            // Seen *before* it finished does not count, which is what keeps a run you glanced at
+            // and then left from slipping past unnoticed.
+            guard success, now.timeIntervalSince(finishedAt) <= noticeWindow,
+                  (lastViewed[id] ?? .distantPast) < finishedAt else { return .settled }
             return .unseen
         }
     }

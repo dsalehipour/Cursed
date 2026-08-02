@@ -42,7 +42,8 @@ Start it automatically at login:
 scripts/install-login-item.sh     # undo with uninstall-login-item.sh
 ```
 
-You can also right-click the window to quit, and drag it anywhere. Its position is remembered.
+You can also right-click a row to dismiss it, right-click the window to quit, and drag it
+anywhere. Its position is remembered.
 
 ## What the states mean
 
@@ -51,8 +52,8 @@ There are three, and only one of them draws attention:
 | Row | Meaning |
 | --- | --- |
 | Plain dark text, no dot | A run is in flight. The timer counts up live. |
-| **Green dot** | It finished and you have not acknowledged it yet. |
-| Light grey text, no dot | Old news. You clicked it, you stopped it yourself, or it finished more than 10 minutes ago. |
+| **Green dot** | It finished and you have not seen it. |
+| Light grey text, no dot | Old news. You read it in Cursor, you clicked it, you stopped it yourself, or it finished more than 10 minutes ago. |
 
 A completion plays a soft chime. Runs you aborted do not, on the grounds that you cannot have
 failed to notice something you stopped by hand. Finished conversations stay listed for 30
@@ -61,10 +62,28 @@ minutes, which leaves them a comfortable spell as quiet grey history after the d
 A run Cursor still considers open but has not touched in four minutes is treated as stalled: it
 keeps reading as in flight, and drops off the list once it has been cold for 30 minutes.
 
+Right-clicking a row dismisses it early, along with its chime. It stays gone until that
+conversation next starts a run, which is measured from the run's start rather than its heartbeat:
+dismissing something still in flight would otherwise put it back on screen a second later on the
+next beat. Dismissals live in memory, so restarting the app brings everything back.
+
 Clicking a row brings Cursor forward and counts as acknowledging it, so the dot clears
 immediately. Cursor only registers deep links for automations and background agents, so there is
 no URL that opens one specific chat; if Accessibility permission happens to be granted, the
 window matching that conversation's project is raised too.
+
+### Reading a conversation clears its own dot
+
+Dismissing a run you have already read is busywork, so the panel watches for you reading it in
+Cursor and clears the dot itself. That needs two things to be true at once: Cursor is the
+frontmost application, and the conversation is the one it has on screen. The chat stays selected
+while Cursor sits behind your browser, so the frontmost half is what stops dots clearing for runs
+you never actually saw.
+
+Seen-ness is a timestamp rather than a flag, and the distinction is the point. A run you glanced
+at and then walked away from finishes *after* you looked, so it still earns a dot; a run you were
+watching as it completed does not. The rule is simply whether you last looked at it before or
+after it finished.
 
 ### Clicking versus dragging
 
@@ -112,6 +131,18 @@ have not touched since this morning starts its next run carrying a heartbeat hou
 liveness by the checkpoint alone therefore reports a run that began seconds ago as stalled, and
 then hides it for being stale — the panel goes blank at precisely the moment you start work.
 Liveness is measured from whichever of the two is later, and the query window considers both.
+
+A third table, `ItemTable`, holds Cursor's own settings, and one key in it is what makes reading
+a conversation clear its dot:
+
+```
+cursor/glass.selectedAgent  ->  4c2c6982-37ed-474d-b1c8-5dfb669351cf
+```
+
+It is the bare id of the chat currently on screen, rewritten the moment you switch. Measured by
+polling it at 200ms while switching chats, the new value lands within a second, so a poll every
+one to three seconds sees it effectively immediately. The key is global rather than per-window,
+so with several windows open it names the last chat you selected in any of them.
 
 Everything is opened read-only, so Cursor never contends with this app for a write lock.
 
