@@ -44,10 +44,18 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-# Ad-hoc is enough here: the app reads only files the user already owns. Accessibility (used
-# for the best-effort window raise) is optional, and its grant is pinned to the cdhash, so it
-# needs re-approving after a rebuild.
-codesign --force --sign - --identifier com.cursed.app "$APP"
+# Signed with a fixed local identity rather than ad-hoc. Clicking a row needs Accessibility, and
+# macOS pins that grant to the signature: an ad-hoc signature is derived from the code hash and
+# so changes with every build, which silently revoked the permission each time. Ad-hoc is kept as
+# a fallback so the project still builds without the certificate.
+IDENTITY="cursed-dev"
+if security find-identity -v -p codesigning | grep -q "\"$IDENTITY\""; then
+    codesign --force --sign "$IDENTITY" --identifier com.cursed.app "$APP"
+else
+    echo "==> no '$IDENTITY' identity found, signing ad-hoc; Accessibility will need"
+    echo "    re-approving after every build. Run scripts/create-signing-identity.sh once."
+    codesign --force --sign - --identifier com.cursed.app "$APP"
+fi
 codesign --verify --verbose=1 "$APP"
 
 echo
