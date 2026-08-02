@@ -45,11 +45,7 @@ final class Store: ObservableObject {
 
     @Published private(set) var rows: [Row] = []
 
-    /// How long a finished conversation keeps its dot before it is assumed to have been seen.
-    /// Clicking the row says so explicitly and skips the wait.
-    private let noticeWindow: TimeInterval = 10 * 60
-    /// How long a finished conversation stays listed at all. Comfortably longer than the notice
-    /// window, so a completion always gets a spell as quiet history rather than vanishing.
+    /// How long a finished conversation stays listed at all, counted from when it finished.
     private let doneVisibility: TimeInterval = 30 * 60
     /// An open run whose heartbeat is older than this is reported as stalled. The heartbeat can
     /// legitimately lag by up to a minute, so this is deliberately well clear of that.
@@ -72,6 +68,12 @@ final class Store: ObservableObject {
     /// same reason as `lastViewed`: it is what lets the row come back when there is genuinely
     /// something new, rather than staying gone for good.
     private var dismissed: [String: Date] = [:]
+    /// Completions that finished without you seeing them, kept by their last snapshot so the row
+    /// can outlive the query window. This is what makes "unseen" mean it waits for you rather
+    /// than for a while: nothing here expires on age, only on being seen or dismissed. Held in
+    /// memory only, so a restart forgets them, in keeping with everything else here.
+    private var waiting: [String: ConversationSnapshot] = [:]
+    private var hasPolled = false
 
     /// When you last spoke in a conversation, remembered rather than re-derived. Working it out
     /// walks the conversation's entire history, which is far too dear to repeat every second for
@@ -95,7 +97,7 @@ final class Store: ObservableObject {
     }
 
     /// Clicking a row is as clear a statement as there is that you have seen it, so the dot goes
-    /// straight away rather than waiting out the notice window.
+    /// straight away.
     func acknowledge(_ id: String) {
         lastViewed[id] = Date()
         poll()
@@ -109,6 +111,9 @@ final class Store: ObservableObject {
     /// conversation does something genuinely new.
     func dismiss(_ id: String) {
         dismissed[id] = Date()
+        // Otherwise it would be held indefinitely as an unseen completion, waiting for an
+        // acknowledgement that dismissing it has already given.
+        waiting.removeValue(forKey: id)
         poll()
     }
 
@@ -150,7 +155,24 @@ final class Store: ObservableObject {
 
     private func poll() {
         let now = Date()
-        let snapshots = db.fetch(since: queryWindow, now: now)
+        let fetched = db.fetch(since: queryWindow, now: now)
+        // A completion you have not seen outlives the query window. Once the conversation stops
+        // being fetched it is served from the last snapshot taken of it, so being away for two
+        // hours cannot make a waiting dot disappear.
+        let present = Set(fetched.map(\.id))
+        let snapshots = fetched + waiting.values.filter { !present.contains($0.id) }
+
+        // Anything already finished at launch is adopted as seen. The app cannot have shown you a
+        // dot for work that ended before it was watching, and since view times are not persisted,
+        // the alternative is every restart opening with a screenful of dots for this afternoon's
+        // finished runs — the dot would come to mean "recent" instead of "yours to look at".
+        if !hasPolled {
+            hasPolled = true
+            for snapshot in snapshots {
+                if case .done = status(for: snapshot, now: now) { lastViewed[snapshot.id] = now }
+            }
+        }
+
         // Before the rows are built, so a conversation you are reading right now is already
         // marked seen by the time this poll decides whether to give it a dot.
         noteConversationOnScreen(now: now, in: snapshots)
@@ -163,6 +185,8 @@ final class Store: ObservableObject {
             if status.isActive { stillActive.insert(snapshot.id) }
             // Ahead of the chime as well as the row, so something you have waved off stays quiet.
             if let waved = dismissed[snapshot.id], snapshot.lastRunStart <= waved { continue }
+            let attention = attention(for: status, id: snapshot.id,
+                                      finishedAt: snapshot.checkpoint, now: now)
             var justFinished = false
 
             switch status {
@@ -171,11 +195,20 @@ final class Store: ObservableObject {
             case .stalled:
                 if now.timeIntervalSince(snapshot.lastSignOfLife) > stalledVisibility { continue }
             case .done:
-                if now.timeIntervalSince(snapshot.checkpoint) > doneVisibility { continue }
+                // Age retires history, never a dot. A completion you have not seen stays until
+                // you see it, however long that takes.
+                if attention != .unseen,
+                   now.timeIntervalSince(snapshot.checkpoint) > doneVisibility { continue }
                 justFinished = activeIDs.contains(snapshot.id)
             }
 
-            let entry = row(snapshot, status: status, now: now)
+            if attention == .unseen {
+                waiting[snapshot.id] = snapshot
+            } else {
+                waiting.removeValue(forKey: snapshot.id)
+            }
+
+            let entry = row(snapshot, status: status, attention: attention, now: now)
             if justFinished { onFinished?(entry) }
             visible.append(entry)
         }
@@ -194,7 +227,7 @@ final class Store: ObservableObject {
 
         let wasActive = rows.contains { $0.status.isActive }
         rows = visible.sorted { a, b in
-            let rankA = rank(a.status), rankB = rank(b.status)
+            let rankA = rank(a), rankB = rank(b)
             if rankA != rankB { return rankA < rankB }
             // Waiting longest first among active runs, since those are likeliest to need
             // attention; most recently finished first among the rest.
@@ -240,8 +273,10 @@ final class Store: ObservableObject {
         }
     }
 
-    /// A finished run is worth marking only while it is plausibly still news. An aborted one
-    /// never is: you stopped it yourself, so you already know.
+    /// A finished run keeps its dot until you have actually seen it — no sooner, and on no timer.
+    /// Letting one lapse on age would have the panel quietly decide you had noticed something you
+    /// had not, which is the one thing it exists to prevent. An aborted run is the exception and
+    /// never earns a dot: you stopped it yourself, so you already know.
     private func attention(for status: TurnStatus, id: String,
                            finishedAt: Date, now: Date) -> Attention {
         switch status {
@@ -250,21 +285,20 @@ final class Store: ObservableObject {
         case .done(let success):
             // Seen *before* it finished does not count, which is what keeps a run you glanced at
             // and then left from slipping past unnoticed.
-            guard success, now.timeIntervalSince(finishedAt) <= noticeWindow,
-                  (lastViewed[id] ?? .distantPast) < finishedAt else { return .settled }
+            guard success, (lastViewed[id] ?? .distantPast) < finishedAt else { return .settled }
             return .unseen
         }
     }
 
-    private func row(_ snapshot: ConversationSnapshot, status: TurnStatus, now: Date) -> Row {
+    private func row(_ snapshot: ConversationSnapshot, status: TurnStatus,
+                     attention: Attention, now: Date) -> Row {
         let asked = lastSpoke(in: snapshot, active: status.isActive, now: now)
         return Row(
             id: snapshot.id,
             title: snapshot.name,
             project: snapshot.project,
             status: status,
-            attention: attention(for: status, id: snapshot.id,
-                                 finishedAt: snapshot.checkpoint, now: now),
+            attention: attention,
             sinceLastMessage: max(0, now.timeIntervalSince(asked)),
             lastActivity: snapshot.checkpoint
         )
@@ -290,11 +324,15 @@ final class Store: ObservableObject {
         return spokeAt ?? runStart
     }
 
-    private func rank(_ status: TurnStatus) -> Int {
-        switch status {
+    /// Runs in flight, then completions still waiting on you, then history. The middle rank
+    /// matters because those rows never expire: ordered by date alone, a dot from this morning
+    /// would sink beneath the afternoon's finished work and end up inside the overflow count,
+    /// which is the one place a row still asking for attention must never be.
+    private func rank(_ row: Row) -> Int {
+        switch row.status {
         case .running: return 0
         case .stalled: return 1
-        case .done: return 2
+        case .done: return row.attention == .unseen ? 2 : 3
         }
     }
 }

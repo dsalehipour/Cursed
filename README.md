@@ -53,7 +53,7 @@ There are three, and only one of them draws attention:
 | --- | --- |
 | Plain dark text, no dot | A run is in flight. The timer counts up live. |
 | **Green dot** | It finished and you have not seen it. |
-| Light grey text, no dot | Old news. You read it in Cursor, you clicked it, you stopped it yourself, or it finished more than 10 minutes ago. |
+| Light grey text, no dot | Dealt with. You read it in Cursor, you clicked it, or you stopped it yourself. |
 
 The time on the right is how long ago **you** last said something to that conversation — a message
 you typed, or an answer you gave one of Cursor's in-chat questions. It is not how long the run has
@@ -61,9 +61,22 @@ been going, which is what Cursor's own sidebar shows, and not how long a finishe
 answers "when did I last touch this", which is the question worth asking when several
 conversations are in the air and one of them has quietly been waiting on you.
 
+The dot is not on a timer. It clears when you have actually seen the conversation and at no other
+point, because a dot that expired on age would be the panel quietly deciding you had noticed
+something you had not — the one thing it exists to prevent. So a completion you have not seen
+waits, indefinitely, and sorts above finished work you have already dealt with: left in date order
+it would eventually sink into the overflow count, which is the last place a row still asking for
+something should end up.
+
+Once a row is dealt with it becomes ordinary history and disappears 30 minutes after it finished.
+
 A completion plays a soft chime. Runs you aborted do not, on the grounds that you cannot have
-failed to notice something you stopped by hand. Finished conversations stay listed for 30
-minutes, which leaves them a comfortable spell as quiet grey history after the dot goes.
+failed to notice something you stopped by hand.
+
+Only runs that finish while the app is watching can be unseen. Anything already finished when it
+launches is adopted as seen: the app never showed you a dot for it, and since none of this is
+written to disk, the alternative is every restart opening with a screenful of dots for the
+afternoon's work.
 
 A run Cursor still considers open but has not touched in four minutes is treated as stalled: it
 keeps reading as in flight, and drops off the list once it has been cold for 30 minutes.
