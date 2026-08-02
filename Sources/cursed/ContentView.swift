@@ -206,7 +206,7 @@ private struct RowView: View {
 
             Spacer(minLength: 6)
 
-            Text(Format.duration(row.duration))
+            Text(Format.duration(row.sinceLastMessage))
                 .font(.system(size: 11.5, weight: row.attention.weight, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(.primary.opacity(row.attention.timeOpacity))

@@ -90,7 +90,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func announce(_ row: Store.Row) {
         let completed = row.status == .done(success: true)
-        log("finished \(completed ? "ok" : "aborted"): \(row.title) (\(row.project)) after \(Format.duration(row.duration))")
+        // Logged the moment the run ends, when time-since-your-message is still the run's length.
+        log("finished \(completed ? "ok" : "aborted"): \(row.title) (\(row.project))"
+            + " after \(Format.duration(row.sinceLastMessage))")
 
         // An aborted run was stopped by hand, so it is not news worth a chime.
         guard completed, let sound = NSSound(named: "Glass") else { return }

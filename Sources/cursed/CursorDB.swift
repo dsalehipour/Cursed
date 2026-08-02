@@ -8,7 +8,8 @@ import SQLite3
 /// "is it still going, and for how long" a direct lookup rather than a guess.
 ///
 /// Two other columns fill in the rest of the picture:
-///   * `lastUpdatedAt` — when the most recent run started, which survives after the run ends.
+///   * `lastUpdatedAt` — when the most recent run started, which is the moment you sent the
+///                       message that began it, and which outlives the run itself.
 ///   * `checkpointAt`  — a heartbeat written while a conversation is live, so it doubles as the
 ///                       finish time of a completed run and as a liveness check for a stuck one.
 ///
@@ -20,6 +21,8 @@ struct ConversationSnapshot {
     /// Non-nil exactly when a run is in flight; the value is that run's start time.
     let unfinishedRunAt: Date?
     let status: String
+    /// Start of the most recent run, and so the moment you last sent a message here. Matches
+    /// `unfinishedRunAt` to the millisecond while a run is in flight, and stays put once it ends.
     let lastRunStart: Date
     let checkpoint: Date
     /// Cursor's own one-line description of recent activity, e.g. "Edited main.swift".

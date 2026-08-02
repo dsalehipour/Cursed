@@ -36,8 +36,9 @@ final class Store: ObservableObject {
         var project: String
         var status: TurnStatus
         var attention: Attention
-        /// Time the current run has been going, or how long the finished one took.
-        var duration: TimeInterval
+        /// How long ago you last sent a message here. Cursor begins a run the moment you send, so
+        /// while one is in flight this is also how long it has been going.
+        var sinceLastMessage: TimeInterval
         /// Last time Cursor touched the conversation; for a finished run this is when it ended.
         var lastActivity: Date
     }
@@ -103,15 +104,20 @@ final class Store: ObservableObject {
         let now = Date()
         rows = [
             Row(id: "1", title: "Refactor payments pipeline", project: "utilityprofit",
-                status: .running, attention: .working, duration: 1_337, lastActivity: now),
+                status: .running, attention: .working,
+                sinceLastMessage: 1_337, lastActivity: now),
             Row(id: "2", title: "Cursor app status window", project: "cursed",
-                status: .running, attention: .working, duration: 92, lastActivity: now),
+                status: .running, attention: .working,
+                sinceLastMessage: 92, lastActivity: now),
             Row(id: "3", title: "Structured thinking UI", project: "the-architect",
-                status: .done(success: true), attention: .unseen, duration: 781, lastActivity: now),
+                status: .done(success: true), attention: .unseen,
+                sinceLastMessage: 781, lastActivity: now),
             Row(id: "4", title: "Ask page submission lag", project: "the-architect",
-                status: .done(success: true), attention: .settled, duration: 3_355, lastActivity: now),
+                status: .done(success: true), attention: .settled,
+                sinceLastMessage: 3_355, lastActivity: now),
             Row(id: "5", title: "Bulk tenant upload inquiry", project: "utilityprofit",
-                status: .done(success: false), attention: .settled, duration: 148, lastActivity: now),
+                status: .done(success: false), attention: .settled,
+                sinceLastMessage: 148, lastActivity: now),
         ]
     }
 
@@ -175,9 +181,11 @@ final class Store: ObservableObject {
         rows = visible.sorted { a, b in
             let rankA = rank(a.status), rankB = rank(b.status)
             if rankA != rankB { return rankA < rankB }
-            // Longest-running first among active runs, since those are likeliest to need
+            // Waiting longest first among active runs, since those are likeliest to need
             // attention; most recently finished first among the rest.
-            return a.status.isActive ? a.duration > b.duration : a.lastActivity > b.lastActivity
+            return a.status.isActive
+                ? a.sinceLastMessage > b.sinceLastMessage
+                : a.lastActivity > b.lastActivity
         }
 
         if wasActive != rows.contains(where: { $0.status.isActive }) {
@@ -234,13 +242,12 @@ final class Store: ObservableObject {
     }
 
     private func row(_ snapshot: ConversationSnapshot, status: TurnStatus, now: Date) -> Row {
-        let duration: TimeInterval
-        if let start = snapshot.unfinishedRunAt {
-            duration = max(0, now.timeIntervalSince(start))
-        } else {
-            // Aborted runs can record a checkpoint that predates the start, so clamp.
-            duration = max(0, snapshot.checkpoint.timeIntervalSince(snapshot.lastRunStart))
-        }
+        // Both fields are the moment a run began, which is the moment you sent the message that
+        // started it. `unfinishedRunAt` is definitionally that and is preferred while a run is in
+        // flight; `lastRunStart` is the same instant but survives the run ending, and is what
+        // keeps a finished row counting up from your message rather than freezing on how long
+        // the run happened to take.
+        let asked = snapshot.unfinishedRunAt ?? snapshot.lastRunStart
         return Row(
             id: snapshot.id,
             title: snapshot.name,
@@ -248,7 +255,7 @@ final class Store: ObservableObject {
             status: status,
             attention: attention(for: status, id: snapshot.id,
                                  finishedAt: snapshot.checkpoint, now: now),
-            duration: duration,
+            sinceLastMessage: max(0, now.timeIntervalSince(asked)),
             lastActivity: snapshot.checkpoint
         )
     }

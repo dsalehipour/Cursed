@@ -1,7 +1,7 @@
 # cursed
 
-A tiny always-on-top window showing which Cursor conversations are running, how long they have
-been at it, and which ones finished while you were looking somewhere else.
+A tiny always-on-top window showing which Cursor conversations are running, how long ago you last
+said anything to each of them, and which ones finished while you were looking somewhere else.
 
 ```
 ┌────────────────────────────────────────────┐
@@ -54,6 +54,12 @@ There are three, and only one of them draws attention:
 | Plain dark text, no dot | A run is in flight. The timer counts up live. |
 | **Green dot** | It finished and you have not seen it. |
 | Light grey text, no dot | Old news. You read it in Cursor, you clicked it, you stopped it yourself, or it finished more than 10 minutes ago. |
+
+The time on the right is how long ago you last sent a message to that conversation, not how long
+its run took. Cursor starts a run the moment you send, so for anything in flight the two are the
+same number; the difference shows once a run ends, where a finished row keeps counting up from
+your message rather than freezing on however long the work happened to take. It answers "when did
+I last touch this", which is the question you have when several conversations are in the air.
 
 A completion plays a soft chime. Runs you aborted do not, on the grounds that you cannot have
 failed to notice something you stopped by hand. Finished conversations stay listed for 30
@@ -120,8 +126,7 @@ timestamps; `cursorDiskKV` holds a JSON blob per conversation under `composerDat
 The blob carries the field this whole app rests on:
 
 - **`unfinishedRunAt`** is set to the exact moment a run starts and cleared when it ends.
-  Non-null means running, and the value is the start time, which is where the live timer
-  comes from.
+  Non-null means running, and the value is the start time.
 - **`status`** is `completed` or `aborted` once the run is over. It only means anything at that
   point: while a run is in flight the field reads `aborted`, and it flips to `completed` when the
   run ends cleanly. Over 30 days of local history that is 51 `completed` against a single genuine
@@ -133,6 +138,11 @@ The blob carries the field this whole app rests on:
 From `composerHeaders`, `lastUpdatedAt` is when the most recent run began and `checkpointAt`
 is a heartbeat written while a conversation is live, which doubles as the finish time of a
 completed run and as the liveness check behind the stalled state.
+
+`lastUpdatedAt` is also what the timer counts from, because a run begins the instant you send:
+checked against the last `type: 1` entry in the conversation's own `fullConversationHeadersOnly`
+list, the two agree to within two milliseconds. It is the better source of the pair, since
+`unfinishedRunAt` is cleared when the run ends and this survives it.
 
 Both are needed, because the heartbeat is not written until a run is already underway. For the
 first moments of a run the checkpoint still belongs to the *previous* turn, so a conversation you
