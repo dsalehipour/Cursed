@@ -6,7 +6,7 @@ enum Metrics {
     static let contentWidth: CGFloat = 300
     /// Breathing room so the glass edges and their shading are never clipped by the window.
     static let inset: CGFloat = 12
-    static let rowHeight: CGFloat = 46
+    static let rowHeight: CGFloat = 41
     static let rowSpacing: CGFloat = 7
     static let emptyHeight: CGFloat = 38
     static let overflowHeight: CGFloat = 22
@@ -48,6 +48,25 @@ extension Attention {
         switch self {
         case .working, .unseen: return 0.62
         case .settled: return 0.36
+        }
+    }
+
+    /// Weight carries the same signal as the dot: a finished run you have not seen is the only
+    /// thing in the panel set in bold. A run still going, and one you have already read, both
+    /// stay regular, so the panel only thickens when something is actually waiting on you.
+    var weight: Font.Weight {
+        switch self {
+        case .unseen: return .bold
+        case .working, .settled: return .regular
+        }
+    }
+
+    /// The project eyebrow is small enough that regular weight would undersell it, so it sits one
+    /// step above the rest of the row until the row goes bold with everything else.
+    var projectWeight: Font.Weight {
+        switch self {
+        case .unseen: return .bold
+        case .working, .settled: return .medium
         }
     }
 
@@ -173,13 +192,13 @@ private struct RowView: View {
                 // The project reads as an eyebrow above the title: smaller, so it stays
                 // subordinate, but weighted and opaque enough to actually be read at a glance.
                 Text(row.project)
-                    .font(.system(size: 10.5, weight: .semibold))
+                    .font(.system(size: 10, weight: row.attention.projectWeight))
                     .foregroundStyle(.primary.opacity(row.attention.projectOpacity))
                     .lineLimit(1)
                     .truncationMode(.tail)
 
                 Text(row.title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 12, weight: row.attention.weight))
                     .foregroundStyle(.primary.opacity(row.attention.titleOpacity))
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -188,7 +207,7 @@ private struct RowView: View {
             Spacer(minLength: 6)
 
             Text(Format.duration(row.duration))
-                .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                .font(.system(size: 11.5, weight: row.attention.weight, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(.primary.opacity(row.attention.timeOpacity))
                 .contentTransition(.numericText())
