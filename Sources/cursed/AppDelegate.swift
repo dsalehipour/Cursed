@@ -18,7 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             onSelect: { [weak self] row in
                 self?.store.acknowledge(row.id)
                 self?.log("reveal \(row.project): \(row.title)")
-                CursorLink.reveal(project: row.project)
+                CursorLink.reveal(project: row.project, title: row.title)
             },
             onDismiss: { [weak self] row in
                 self?.log("dismissed \(row.project): \(row.title)")

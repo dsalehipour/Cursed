@@ -67,10 +67,19 @@ conversation next starts a run, which is measured from the run's start rather th
 dismissing something still in flight would otherwise put it back on screen a second later on the
 next beat. Dismissals live in memory, so restarting the app brings everything back.
 
-Clicking a row brings Cursor forward and counts as acknowledging it, so the dot clears
-immediately. Cursor only registers deep links for automations and background agents, so there is
-no URL that opens one specific chat; if Accessibility permission happens to be granted, the
-window matching that conversation's project is raised too.
+Clicking a row opens that conversation in Cursor and counts as acknowledging it, so the dot clears
+immediately. Cursor registers deep links only for automations and background agents, so there is
+no URL that opens one specific chat, and now that every conversation shares a single Agents
+window there is no per-project window to raise either. What Cursor does publish is its Recent
+Agents menu, in the menu bar extra, with an item per conversation; pressing the matching item is
+what moves Cursor to that chat. Conversations that have aged out of that menu fall back to raising
+the window whose title carries the project name, which is what the older one-window-per-folder
+layout needs.
+
+This is the one feature that requires Accessibility permission. Without it a click can still bring
+Cursor forward, but only on whichever chat it was already showing — which looks like it works
+whenever you happen to click the conversation you were last reading, and like it does nothing
+otherwise.
 
 ### Reading a conversation clears its own dot
 
