@@ -165,11 +165,15 @@ final class Store: ObservableObject {
         // Anything already finished at launch is adopted as seen. The app cannot have shown you a
         // dot for work that ended before it was watching, and since view times are not persisted,
         // the alternative is every restart opening with a screenful of dots for this afternoon's
-        // finished runs — the dot would come to mean "recent" instead of "yours to look at".
+        // finished runs — the dot would come to mean "recent" instead of "yours to look at". The
+        // time recorded is the moment each one finished rather than now, since now would read as
+        // having just dealt with them and keep the lot on screen as grey history.
         if !hasPolled {
             hasPolled = true
             for snapshot in snapshots {
-                if case .done = status(for: snapshot, now: now) { lastViewed[snapshot.id] = now }
+                if case .done = status(for: snapshot, now: now) {
+                    lastViewed[snapshot.id] = snapshot.checkpoint
+                }
             }
         }
 
@@ -187,6 +191,14 @@ final class Store: ObservableObject {
             if let waved = dismissed[snapshot.id], snapshot.lastRunStart <= waved { continue }
             let attention = attention(for: status, id: snapshot.id,
                                       finishedAt: snapshot.checkpoint, now: now)
+            // Settled before the filters below, every one of which can skip the rest of this
+            // iteration. Leaving a stale unseen snapshot behind would have the next poll serve
+            // the row back from it, dot and all, which is precisely what dropping it meant to do.
+            if attention == .unseen {
+                waiting[snapshot.id] = snapshot
+            } else {
+                waiting.removeValue(forKey: snapshot.id)
+            }
             var justFinished = false
 
             switch status {
@@ -195,17 +207,15 @@ final class Store: ObservableObject {
             case .stalled:
                 if now.timeIntervalSince(snapshot.lastSignOfLife) > stalledVisibility { continue }
             case .done:
-                // Age retires history, never a dot. A completion you have not seen stays until
-                // you see it, however long that takes.
+                // Age retires history, never a dot: a completion you have not seen stays until
+                // you see it, however long that takes. The clock then runs from when you dealt
+                // with it rather than from when it finished, so reading something that has been
+                // waiting all afternoon leaves it in view as grey history for a while, instead of
+                // deleting the row from under the click that acknowledged it.
+                let dealtWith = max(snapshot.checkpoint, lastViewed[snapshot.id] ?? .distantPast)
                 if attention != .unseen,
-                   now.timeIntervalSince(snapshot.checkpoint) > doneVisibility { continue }
+                   now.timeIntervalSince(dealtWith) > doneVisibility { continue }
                 justFinished = activeIDs.contains(snapshot.id)
-            }
-
-            if attention == .unseen {
-                waiting[snapshot.id] = snapshot
-            } else {
-                waiting.removeValue(forKey: snapshot.id)
             }
 
             let entry = row(snapshot, status: status, attention: attention, now: now)
@@ -214,11 +224,13 @@ final class Store: ObservableObject {
         }
 
         activeIDs = stillActive
-        // View times only matter while the row is listed; drop the rest so the map cannot grow
-        // for as long as the app is running.
         let listed = Set(visible.map(\.id))
-        lastViewed = lastViewed.filter { listed.contains($0.key) }
         anchors = anchors.filter { listed.contains($0.key) }
+        // View times outlive the list. A row leaving it is usually the consequence of having been
+        // seen, so pruning against what is listed would forget the acknowledgement and hand the
+        // row its dot back on the very next poll. They expire by age instead, past the point
+        // where the conversation is fetched at all.
+        lastViewed = lastViewed.filter { now.timeIntervalSince($0.value) <= queryWindow }
         // Dismissals cannot be pruned against what is listed, since keeping the row out of that
         // list is the whole point. They expire by age instead: beyond the query window the
         // conversation is no longer fetched at all, and one that resumes has a newer run start

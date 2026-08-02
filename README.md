@@ -68,7 +68,9 @@ waits, indefinitely, and sorts above finished work you have already dealt with: 
 it would eventually sink into the overflow count, which is the last place a row still asking for
 something should end up.
 
-Once a row is dealt with it becomes ordinary history and disappears 30 minutes after it finished.
+Once a row is dealt with it becomes ordinary history and disappears half an hour later — timed
+from the moment you dealt with it, so reading something that has been waiting all afternoon leaves
+it on screen as grey history for a while rather than deleting it out from under the click.
 
 A completion plays a soft chime. Runs you aborted do not, on the grounds that you cannot have
 failed to notice something you stopped by hand.
