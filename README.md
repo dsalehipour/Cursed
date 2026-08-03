@@ -7,6 +7,14 @@
 **Which of your Cursor and ChatGPT conversations are running, how long ago you last said anything
 to each of them, and which ones finished while you were looking somewhere else.**
 
+<a href="https://github.com/dsalehipour/Cursed/releases/latest/download/cursed.zip"><img src="assets/download-button.png" alt="Download cursed for macOS" width="234"></a>
+
+<sub>Apple Silicon · macOS 26 or later · 1.7 MB ·
+<a href="https://github.com/dsalehipour/Cursed/releases/latest">release notes</a> ·
+<a href="#build-from-source">build from source</a></sub>
+
+<br>
+
 <img src="assets/panel-unseen.jpg" width="820"
   alt="The cursed panel floating over a desktop, listing five conversations by project and title with the time since you last spoke to each: one run still going at the top, then two carrying a green dot for having finished unseen, then two faded to grey as dealt with">
 
@@ -15,9 +23,8 @@ were away, two rows already dealt with.</sub>
 
 <br>
 
-`macOS 26` · `Swift 6` · `no dependencies` · `read-only` · `~0.1% of a core`
+`Swift 6` · `no dependencies` · `read-only` · `~0.1% of a core`
 
-[**Download**](https://github.com/dsalehipour/Cursed/releases/latest/download/cursed.zip) ·
 [Install](#install) · [States](#what-the-states-mean) · [Dragging](#clicking-versus-dragging) ·
 [How it knows](#how-it-knows) · [Performance](#performance) · [Development](#development)
 
@@ -40,12 +47,19 @@ single green dot.
 Apple Silicon, macOS 26 or later. Cursor and the ChatGPT Mac app are both optional — the panel
 reads whichever of them is there.
 
-[**Download the latest release**](https://github.com/dsalehipour/Cursed/releases/latest/download/cursed.zip),
-unzip it, and drag `cursed.app` to Applications. macOS refuses the first launch, because the app is
-signed but not notarized by Apple: go to **System Settings › Privacy & Security**, scroll to
-Security, and click **Open Anyway**, which is offered for about an hour after the refusal.
+1. [**Download `cursed.zip`**](https://github.com/dsalehipour/Cursed/releases/latest/download/cursed.zip),
+   unzip it, and drag `cursed.app` to Applications.
+2. Open it. The first launch is refused, because the app is signed but not notarized by Apple.
+3. Go to **System Settings › Privacy & Security**, scroll to Security, and click **Open Anyway**,
+   which is offered for about an hour after the refusal. Then open the app again.
 
-Or build it, which needs a Swift 6 toolchain:
+There is no dock icon and no window to find: the floating list is the whole app. Drag it anywhere
+and its position is remembered, right-click a row to dismiss it, and quit from the menu bar item or
+by right-clicking the window.
+
+### Build from source
+
+Needs a Swift 6 toolchain.
 
 ```bash
 scripts/create-signing-identity.sh   # once per machine, see below
@@ -62,14 +76,14 @@ Build without it and everything works except that clicking a row needs re-approv
 rebuild. Either way the grant itself is given once, in **System Settings › Privacy & Security ›
 Accessibility**.
 
-Start it automatically at login:
+### Starting it at login
+
+A downloaded copy goes in your login items, under **System Settings › General**. A build has a
+script for it instead, since what it has to launch is the bundle left in `build/`:
 
 ```bash
 scripts/install-login-item.sh        # undo with uninstall-login-item.sh
 ```
-
-There is a menu bar item to quit from. You can also right-click a row to dismiss it, right-click
-the window to quit, and drag it anywhere. Its position is remembered.
 
 ## What the states mean
 
@@ -376,6 +390,8 @@ CURSED_DB=/tmp/fixture.vscdb swift run cursed --list
 what the panel is showing rather than offering a second opinion.
 
 Logs go to `~/Library/Logs/cursed.log`, including a line each time a run finishes.
+
+### Cutting a release
 
 ```bash
 scripts/release.sh          # build, package, tag, and publish a GitHub release
