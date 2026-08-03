@@ -14,6 +14,9 @@ final class FloatingPanel: NSPanel {
     private var isAdjustingFrame = false
     var isUserMove: Bool { !isAdjustingFrame }
 
+    /// Where the pointer and the window's top-left corner were when the current drag began.
+    private var dragAnchor: (pointer: NSPoint, topLeft: NSPoint)?
+
     init(contentRect: NSRect) {
         super.init(
             contentRect: contentRect,
@@ -28,9 +31,9 @@ final class FloatingPanel: NSPanel {
         // Above normal and floating windows, but below the menu bar and system alerts.
         level = .statusBar
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-        // Dragging is handled by a WindowDragGesture in the content instead. AppKit's background
-        // drag starts on any movement at all, so it ate clicks that drifted by a few points —
-        // which is most of them, on targets this small.
+        // Dragging is driven from the content instead, by `PanelDrag`. AppKit's background drag
+        // starts on any movement at all, so it ate clicks that drifted by a few points — which is
+        // most of them, on targets this small.
         isMovableByWindowBackground = false
         isOpaque = false
         // Visually the window contributes nothing: every pixel you can see comes from the Liquid
@@ -60,6 +63,23 @@ final class FloatingPanel: NSPanel {
                 display: true
             )
         }
+    }
+
+    /// Remembers where the pointer and the window were as a drag starts.
+    func beginDrag(from pointer: NSPoint) {
+        dragAnchor = (pointer: pointer, topLeft: NSPoint(x: frame.minX, y: frame.maxY))
+    }
+
+    /// Positioned from the pointer's total travel since the drag began rather than from per-event
+    /// deltas, so a coalesced or dropped event leaves the window a frame behind rather than
+    /// permanently adrift from the cursor. Height is read fresh each time because rows can come
+    /// and go mid-drag, and a resize keeps the top-left corner rather than the origin.
+    func continueDrag(to pointer: NSPoint) {
+        guard let dragAnchor else { return }
+        setFrameOrigin(NSPoint(
+            x: dragAnchor.topLeft.x + pointer.x - dragAnchor.pointer.x,
+            y: dragAnchor.topLeft.y + pointer.y - dragAnchor.pointer.y - frame.height
+        ))
     }
 
     func restorePosition(defaultSize: NSSize) {

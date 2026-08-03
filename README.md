@@ -138,10 +138,18 @@ obvious approach, `isMovableByWindowBackground`, turns any mouse-down that then 
 window drag — and a click on a 46pt row routinely drifts ten points, so most clicks were being
 swallowed and the panel nudged sideways instead.
 
-Dragging is a `WindowDragGesture` instead, and each row decides between click and drag by how far
-the pointer moved **in screen coordinates**. That detail is the whole trick: while the window is
-being dragged it travels with the pointer, so the view-local translation stays near zero and
-cannot tell the two apart. Under 20 points is a click, more is a reposition.
+`WindowDragGesture` has the opposite fault. It hands the drag to AppKit after two or three points
+of travel, which no row can match without becoming just as fragile — so every press between those
+few points and the twenty a row was willing to forgive did both at once, shifting the panel and
+opening the conversation underneath it.
+
+So the panel moves itself. One press is tracked in one place, `PanelDrag`, and a single threshold
+settles what it was: under 20 points of travel it is a click and the window never moves at all,
+past that it is a reposition and no row will open. Travel is measured **in screen coordinates**,
+which is what makes it measurable at all — once the window is moving it travels with the pointer,
+so the view-local translation stays near zero and cannot tell the two apart. The window is then
+placed from the pointer's total travel rather than by accumulating deltas, so a dropped event
+costs a frame of lag instead of leaving the panel permanently offset from the cursor.
 
 ## How it knows
 

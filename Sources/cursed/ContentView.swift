@@ -99,6 +99,7 @@ extension Attention {
 
 struct ContentView: View {
     @ObservedObject var store: Store
+    let drag: PanelDrag
     var onSelect: (Store.Row) -> Void
     var onDismiss: (Store.Row) -> Void
     var onQuit: () -> Void
@@ -119,7 +120,8 @@ struct ContentView: View {
                         .glassEffectID("empty", in: glass)
                 } else {
                     ForEach(store.rows.prefix(Metrics.maxRows)) { row in
-                        RowView(row: row, onSelect: onSelect, onDismiss: onDismiss, onQuit: onQuit)
+                        RowView(row: row, drag: drag, onSelect: onSelect,
+                                onDismiss: onDismiss, onQuit: onQuit)
                             .glassEffect(
                                 glass(for: row.attention),
                                 in: .rect(cornerRadius: 18, style: .continuous)
@@ -136,9 +138,11 @@ struct ContentView: View {
             .frame(width: Metrics.contentWidth)
         }
         .padding(Metrics.inset)
-        // Rows own the tap; anything that actually travels becomes a window drag. Attached to
-        // the container so the whole panel stays draggable, not just the margins.
-        .simultaneousGesture(WindowDragGesture())
+        // Without a shape of its own the container is only hit where a row happens to be, which
+        // left the margins and the gaps between rows — the parts with no click to be confused
+        // with — as the one place the panel could not be picked up from.
+        .contentShape(Rectangle())
+        .simultaneousGesture(drag.gesture)
         .animation(.smooth(duration: 0.5, extraBounce: 0.18), value: shape)
         .contextMenu {
             Button("Quit cursed", action: onQuit)
@@ -153,32 +157,23 @@ struct ContentView: View {
 
 private struct RowView: View {
     let row: Store.Row
+    let drag: PanelDrag
     var onSelect: (Store.Row) -> Void
     var onDismiss: (Store.Row) -> Void
     var onQuit: () -> Void
 
-    /// Where on screen the press began. The panel travels with the pointer while it is being
-    /// dragged, so a view-local translation stays near zero and cannot tell a click from a drag.
-    /// Screen coordinates can.
-    @State private var pressOrigin: CGPoint?
-
-    /// Generous enough to absorb the wobble in a real click, far short of a deliberate reposition.
-    private static let dragSlop: CGFloat = 20
-
     var body: some View {
         content
             .contentShape(Rectangle())
+            // Feeds the same press the panel is watching, so the row cannot reach a different
+            // verdict about it than the panel does.
             .simultaneousGesture(
                 DragGesture(minimumDistance: 0)
-                    .onChanged { _ in
-                        if pressOrigin == nil { pressOrigin = NSEvent.mouseLocation }
-                    }
+                    .onChanged { _ in drag.track() }
                     .onEnded { _ in
-                        let start = pressOrigin
-                        pressOrigin = nil
-                        guard let start else { return }
-                        let end = NSEvent.mouseLocation
-                        guard hypot(end.x - start.x, end.y - start.y) < Self.dragSlop else { return }
+                        let wasDrag = drag.isDragging
+                        drag.release()
+                        guard !wasDrag else { return }
                         onSelect(row)
                     }
             )

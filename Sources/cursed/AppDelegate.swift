@@ -5,6 +5,7 @@ import Combine
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let store = Store()
+    private let drag = PanelDrag()
     private var panel: FloatingPanel!
     private var cancellables = Set<AnyCancellable>()
     /// Snapshot runs are throwaway windows and must not overwrite the real one's position.
@@ -16,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         let content = ContentView(
             store: store,
+            drag: drag,
             onSelect: { [weak self] row in
                 self?.store.acknowledge(row.id)
                 self?.log("reveal \(row.project): \(row.title)")
@@ -37,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel = FloatingPanel(contentRect: NSRect(origin: .zero, size: size))
         panel.contentView = NSHostingView(rootView: content)
         panel.delegate = self
+        drag.panel = panel
         panel.restorePosition(defaultSize: size)
         panel.orderFrontRegardless()
 
