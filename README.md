@@ -1,24 +1,28 @@
+<div align="center">
+
+<img src="assets/icon.png" alt="" width="112">
+
 # cursed
 
-A tiny always-on-top window showing which Cursor and ChatGPT Mac app conversations are running,
-how long ago you last said anything to each of them, and which ones finished while you were
-looking somewhere else.
+**Which of your Cursor and ChatGPT conversations are running, how long ago you last said anything
+to each of them, and which ones finished while you were looking somewhere else.**
 
-```
-┌────────────────────────────────────────────┐
-│    screenlink                      51m 30s │
-│    Mac app performance strategies          │
-│                                            │
-│    cursed                          31m 12s │
-│    Cursor app status window                │
-│                                            │
-│ ●  the-architect                    4m 16s │
-│    Future of architect tools               │
-└────────────────────────────────────────────┘
-```
+<img src="assets/panel.jpg" width="820"
+  alt="The cursed panel floating over a desktop, listing four conversations, each with its project, title, and the time since you last spoke to it">
 
-Native Swift built on macOS 26 Liquid Glass, no dock icon, floats above other apps including
-full-screen ones, and never takes keyboard focus when you click it.
+<sub>A tiny always-on-top window. Every row is its own piece of Liquid Glass, merged into one surface.</sub>
+
+<br>
+
+`macOS 26` · `Swift 6` · `no dependencies` · `read-only` · `~0.1% of a core`
+
+[Install](#install) · [States](#what-the-states-mean) · [Dragging](#clicking-versus-dragging) ·
+[How it knows](#how-it-knows) · [Performance](#performance) · [Development](#development)
+
+</div>
+
+Native Swift, no dock icon, floats above other apps including full-screen ones, and never takes
+keyboard focus when you click it.
 
 The window itself draws nothing. Each row is its own Liquid Glass shape inside a
 `GlassEffectContainer`, spaced closely enough that they merge into a single continuous surface
@@ -29,18 +33,30 @@ That transparency sets the visual budget: with almost no scrim to work against, 
 by text weight and opacity rather than by colour, and the only mark anywhere on screen is a
 single green dot.
 
-## Build and run
+## Install
+
+Needs macOS 26 and a Swift 6 toolchain. Cursor and the ChatGPT Mac app are both optional — the
+panel reads whichever of them is there.
 
 ```bash
-scripts/build.sh          # compile and assemble build/cursed.app
-scripts/run.sh            # launch it
-scripts/stop.sh           # quit it
+scripts/create-signing-identity.sh   # once per machine, see below
+scripts/build.sh                     # compile and assemble build/cursed.app
+scripts/run.sh                       # launch it
+scripts/stop.sh                      # quit it
 ```
+
+Clicking a row has to bring Cursor forward, which macOS only allows a background app to do through
+Accessibility, and it pins that grant to the app's signature. An ad-hoc signature is derived from
+the code hash and so changes with every build, which silently revoked the permission each time —
+hence the one-off local certificate, which exists only to give macOS something stable to pin to.
+Build without it and everything works except that clicking a row needs re-approving after every
+rebuild. Either way the grant itself is given once, in **System Settings › Privacy & Security ›
+Accessibility**.
 
 Start it automatically at login:
 
 ```bash
-scripts/install-login-item.sh     # undo with uninstall-login-item.sh
+scripts/install-login-item.sh        # undo with uninstall-login-item.sh
 ```
 
 There is a menu bar item to quit from. You can also right-click a row to dismiss it, right-click
@@ -50,12 +66,33 @@ the window to quit, and drag it anywhere. Its position is remembered.
 
 There are four, and two of them draw attention:
 
-| Row | Meaning |
-| --- | --- |
-| Plain dark text, no dot | A run is in flight. The timer counts up live. |
-| **Amber dot** | It asked you a question and is waiting on the answer. |
-| **Green dot** | It finished and you have not seen it. |
-| Light grey text, no dot | Dealt with. You read it in Cursor, you clicked it, or you stopped it yourself. |
+| Row | What it means | What clears it |
+| --- | --- | --- |
+| Plain dark text, no dot | A run is in flight. The timer counts up live. | The run ending |
+| **Amber dot**, bold | It asked you a question and is waiting on the answer. | Answering it, and nothing else |
+| **Green dot**, bold | It finished and you have not seen it. | Seeing it, clicking it, or dismissing it |
+| Light grey text, no dot | Dealt with. You read it in Cursor, you clicked it, or you stopped it yourself. | Half an hour later the row goes |
+
+That is also the order they sort in: a question above a live run, a live run above a completion you
+have not seen, and history last.
+
+```
+┌────────────────────────────────────────────┐
+│ ●  the-architect                    2m 40s │  amber — stopped to ask you something
+│    Ask something tool integration          │
+│                                            │
+│    screenlink                      51m 30s │  in flight
+│    Mac app performance strategies          │
+│                                            │
+│ ●  cursed                          31m 12s │  green — finished, not yet seen
+│    Cursor app status window                │
+│                                            │
+│    home                             1m 34s │  dealt with
+│    Darius coding preferences               │
+└────────────────────────────────────────────┘
+```
+
+Eight rows at most, and anything past that collapses into a `+N more` pill.
 
 Amber and green mean quite different things, which is why the panel spends its only two colours on
 them. Green says work is there to look at. Amber says work has *stopped* and cannot go anywhere
@@ -65,22 +102,36 @@ in the panel that is genuinely blocked.
 Amber is also the one state that being seen does not clear, because reading a question is not
 answering it. It goes when you reply and at no other point.
 
-The time on the right is how long ago **you** last said something to that conversation — a message
-you typed, or an answer you gave one of Cursor's in-chat questions. It is not how long the run has
-been going, which is what Cursor's own sidebar shows, and not how long a finished run took. It
-answers "when did I last touch this", which is the question worth asking when several
-conversations are in the air and one of them has quietly been waiting on you.
+A run Cursor still considers open but has not touched in four minutes is treated as stalled: it
+keeps reading as in flight, and drops off the list once it has been cold for 30 minutes.
 
-The dot is not on a timer. It clears when you have actually seen the conversation and at no other
-point, because a dot that expired on age would be the panel quietly deciding you had noticed
-something you had not — the one thing it exists to prevent. So a completion you have not seen
-waits, indefinitely, and sorts above finished work you have already dealt with: left in date order
-it would eventually sink into the overflow count, which is the last place a row still asking for
+### The time on the right
+
+It is how long ago **you** last said something to that conversation — a message you typed, or an
+answer you gave one of Cursor's in-chat questions. It is not how long the run has been going, which
+is what Cursor's own sidebar shows, and not how long a finished run took. It answers "when did I
+last touch this", which is the question worth asking when several conversations are in the air and
+one of them has quietly been waiting on you.
+
+### When the dot clears
+
+Not on a timer. It clears when you have actually seen the conversation and at no other point,
+because a dot that expired on age would be the panel quietly deciding you had noticed something you
+had not — the one thing it exists to prevent. So a completion you have not seen waits,
+indefinitely, and sorts above finished work you have already dealt with: left in date order it
+would eventually sink into the overflow count, which is the last place a row still asking for
 something should end up.
 
 Once a row is dealt with it becomes ordinary history and disappears half an hour later — timed
 from the moment you dealt with it, so reading something that has been waiting all afternoon leaves
 it on screen as grey history for a while rather than deleting it out from under the click.
+
+Only runs that finish while the app is watching can be unseen. Anything already finished when it
+launches is adopted as seen: the app never showed you a dot for it, and since none of this is
+written to disk, the alternative is every restart opening with a screenful of dots for the
+afternoon's work.
+
+### Sounds
 
 A completion plays a soft chime, and a question plays a different one, so the two can be told apart
 without looking. Runs you aborted play nothing, on the grounds that you cannot have failed to
@@ -91,13 +142,7 @@ database, exactly like one that finished with nothing left to say. That is why a
 announced as a question rather than twice over as a completion: the run ending is taken as the cue
 to go and check whether it ended by asking.
 
-Only runs that finish while the app is watching can be unseen. Anything already finished when it
-launches is adopted as seen: the app never showed you a dot for it, and since none of this is
-written to disk, the alternative is every restart opening with a screenful of dots for the
-afternoon's work.
-
-A run Cursor still considers open but has not touched in four minutes is treated as stalled: it
-keeps reading as in flight, and drops off the list once it has been cold for 30 minutes.
+### Dismissing and opening rows
 
 Right-clicking a row dismisses it early, along with its chime. It stays gone until that
 conversation next starts a run, which is measured from the run's start rather than its heartbeat:
@@ -131,11 +176,11 @@ at and then walked away from finishes *after* you looked, so it still earns a do
 watching as it completed does not. The rule is simply whether you last looked at it before or
 after it finished.
 
-### Clicking versus dragging
+## Clicking versus dragging
 
 The panel is draggable anywhere on its surface, which fights with rows being clickable. The
 obvious approach, `isMovableByWindowBackground`, turns any mouse-down that then travels into a
-window drag — and a click on a 46pt row routinely drifts ten points, so most clicks were being
+window drag — and a click on a 41pt row routinely drifts ten points, so most clicks were being
 swallowed and the panel nudged sideways instead.
 
 `WindowDragGesture` has the opposite fault. It hands the drag to AppKit after two or three points
@@ -160,14 +205,6 @@ zone to cross before it comes with you.
 
 Both integrations are read-only and independent. If either app or its local database is absent,
 the other continues to work normally.
-
-### ChatGPT Mac app
-
-The ChatGPT Mac app's Codex tasks are indexed in `~/.codex/state_5.sqlite`. Their live lifecycle
-events are appended to the rollout JSONL path recorded with each task. `task_started`,
-`task_complete`, user-message, and question-tool events provide the same run, timer, completion,
-and waiting-for-you signals used by the panel. Clicking one uses ChatGPT's published
-`codex://threads/<id>` link, so it opens the exact task without Accessibility UI scripting.
 
 ### Cursor
 
@@ -202,35 +239,6 @@ and the subtitle, and a header with no blob at all is read as a run that started
 and has nothing yet to say it ended. That is what a message sent seconds ago is. Drafts are skipped
 rather than read this way, being chats that have not run at all.
 
-### Working out when you last said something
-
-Neither of those is when *you* last spoke, which is what the timer counts from, and the difference
-is not academic. Answering an in-chat question does not start a new run, so a conversation you
-replied to two minutes ago still carries a run that began half an hour before — and `lastUpdatedAt`
-gets nudged by things that are not you at all, which has it read a few minutes old on a
-conversation last spoken to yesterday. It is wrong in both directions.
-
-The conversation's own `fullConversationHeadersOnly` list has the answer, one entry per message
-and tool call. Two things in it count:
-
-- **`type: 1`** is a message you typed, and carries the `createdAt` you sent it.
-- **an entry immediately after an `askQuestionToolCall`** dates an answer you gave. Answering
-  leaves no entry of its own — the question's tool call is marked answered in place, keeping the
-  `createdAt` of when it was *asked*, which can be many minutes earlier. The model resumes the
-  instant it has your answer, so the next entry lands within a second or two of your click.
-
-The latest of those is the timer's anchor. One `LAG` window function gets both in a single pass,
-but it still walks the whole history: 6ms for a conversation of 2,700 entries, against 1ms for an
-entire poll. So it is cached and re-derived only when a live conversation may have moved on, at
-most every five seconds each, which keeps the app at 0.1% of a core.
-
-Both are needed, because the heartbeat is not written until a run is already underway. For the
-first moments of a run the checkpoint still belongs to the *previous* turn, so a conversation you
-have not touched since this morning starts its next run carrying a heartbeat hours old. Judging
-liveness by the checkpoint alone therefore reports a run that began seconds ago as stalled, and
-then hides it for being stale — the panel goes blank at precisely the moment you start work.
-Liveness is measured from whichever of the two is later, and the query window considers both.
-
 A third table, `ItemTable`, holds Cursor's own settings, and one key in it is what makes reading
 a conversation clear its dot:
 
@@ -259,6 +267,44 @@ before it appeared until after it was answered, is what established the sequence
 `completed` with `additionalData` pending, then submitted.
 
 Everything is opened read-only, so Cursor never contends with this app for a write lock.
+
+### ChatGPT Mac app
+
+The ChatGPT Mac app's Codex tasks are indexed in `~/.codex/state_5.sqlite`. Their live lifecycle
+events are appended to the rollout JSONL path recorded with each task. `task_started`,
+`task_complete`, user-message, and question-tool events provide the same run, timer, completion,
+and waiting-for-you signals used by the panel. Clicking one uses ChatGPT's published
+`codex://threads/<id>` link, so it opens the exact task without Accessibility UI scripting.
+
+### Working out when you last said something
+
+Neither `lastUpdatedAt` nor the heartbeat is when *you* last spoke, which is what the timer counts
+from, and the difference is not academic. Answering an in-chat question does not start a new run,
+so a conversation you replied to two minutes ago still carries a run that began half an hour
+before — and `lastUpdatedAt` gets nudged by things that are not you at all, which has it read a few
+minutes old on a conversation last spoken to yesterday. It is wrong in both directions.
+
+The conversation's own `fullConversationHeadersOnly` list has the answer, one entry per message
+and tool call. Two things in it count:
+
+- **`type: 1`** is a message you typed, and carries the `createdAt` you sent it.
+- **an entry immediately after an `askQuestionToolCall`** dates an answer you gave. Answering
+  leaves no entry of its own — the question's tool call is marked answered in place, keeping the
+  `createdAt` of when it was *asked*, which can be many minutes earlier. The model resumes the
+  instant it has your answer, so the next entry lands within a second or two of your click.
+
+The latest of those is the timer's anchor. One `LAG` window function gets both in a single pass,
+but it still walks the whole history: 6ms for a conversation of 2,700 entries, against 1ms for an
+entire poll. So it is cached and re-derived only when a live conversation may have moved on, at
+most every five seconds each, which keeps the app at 0.1% of a core.
+
+Both the run start and the heartbeat are needed, because the heartbeat is not written until a run
+is already underway. For the first moments of a run the checkpoint still belongs to the *previous*
+turn, so a conversation you have not touched since this morning starts its next run carrying a
+heartbeat hours old. Judging liveness by the checkpoint alone therefore reports a run that began
+seconds ago as stalled, and then hides it for being stale — the panel goes blank at precisely the
+moment you start work. Liveness is measured from whichever of the two is later, and the query
+window considers both.
 
 ### What was tried first, and why it was dropped
 
