@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/icon.png" alt="" width="112">
+<img src="assets/icon-rounded.png" alt="" width="112">
 
 # cursed
 

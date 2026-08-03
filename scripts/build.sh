@@ -15,7 +15,9 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$ROOT/.build/release/cursed" "$APP/Contents/MacOS/cursed"
 # Committed rather than built here: it changes only when the artwork does, and generating it needs
-# the source art. Run scripts/make-icon.swift after editing assets/icon.png.
+# the source art. After editing assets/icon.png, regenerate both things derived from it:
+#   swift scripts/make-icon.swift assets/icon.png Resources/cursed.icns
+#   swift scripts/make-icon.swift assets/icon.png assets/icon-rounded.png 384   # for the README
 cp "$ROOT/Resources/cursed.icns" "$APP/Contents/Resources/cursed.icns"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'

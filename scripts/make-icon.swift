@@ -1,8 +1,9 @@
 #!/usr/bin/env swift
 
-// Turns a square piece of artwork into a macOS .icns.
+// Turns a square piece of artwork into a macOS .icns, or into a single masked PNG.
 //
 //     swift scripts/make-icon.swift assets/icon.png Resources/cursed.icns
+//     swift scripts/make-icon.swift assets/icon.png assets/icon-rounded.png 384
 //
 // Two things stand between generated artwork and an icon that looks native.
 //
@@ -15,19 +16,30 @@
 // The second is the grid. An icon body occupies 824pt of a 1024pt canvas, the margin being the
 // room macOS expects for the shadow it draws. Artwork scaled to the full canvas looks oversized
 // beside everything else in the Dock, which is the usual tell of an icon made by hand.
+//
+// The PNG output exists because anywhere the artwork is shown outside the app — a README, most of
+// all — needs the same cut corners for the same reason: on any background that is not black, the
+// unmasked source shows four dark triangles. It shares this path rather than getting a mask of its
+// own so the two silhouettes cannot drift apart. What it drops is the shadow margin, there being
+// no Dock shadow to leave room for: a transparent border would only make the image render smaller
+// than the width it is given.
 
 import AppKit
 
 let arguments = CommandLine.arguments
-guard arguments.count == 3 else {
-    FileHandle.standardError.write(Data("usage: make-icon.swift <source.png> <out.icns>\n".utf8))
+guard (3...4).contains(arguments.count) else {
+    FileHandle.standardError.write(Data("""
+        usage: make-icon.swift <source.png> <out.icns>
+               make-icon.swift <source.png> <out.png> [size]
+
+        """.utf8))
     exit(2)
 }
 let sourcePath = arguments[1]
 let destination = URL(fileURLWithPath: arguments[2])
 
 /// Apple's icon grid: the body is 824 of 1024, so a little over 80%.
-let bodyFraction = 824.0 / 1024.0
+let iconBodyFraction = 824.0 / 1024.0
 /// The exponent of the superellipse. Five is the value that matches the system shape.
 let squircleExponent = 5.0
 
@@ -176,7 +188,7 @@ let keyed = keyOutBackground(of: source)
 let bounds = artworkBounds(of: keyed)
 guard let artwork = keyed.cropping(to: bounds) else { fail("could not crop the artwork") }
 
-func render(at size: Int) -> Data {
+func render(at size: Int, bodyFraction: Double) -> Data {
     guard let context = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8,
                                   bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
@@ -200,30 +212,51 @@ func render(at size: Int) -> Data {
     return data
 }
 
-let iconset = URL(fileURLWithPath: NSTemporaryDirectory())
-    .appendingPathComponent("cursed-\(UUID().uuidString).iconset")
-try? FileManager.default.createDirectory(at: iconset, withIntermediateDirectories: true)
-defer { try? FileManager.default.removeItem(at: iconset) }
-
-for base in [16, 32, 128, 256, 512] {
-    for scale in [1, 2] {
-        let name = scale == 1 ? "icon_\(base)x\(base).png" : "icon_\(base)x\(base)@2x.png"
-        do {
-            try render(at: base * scale).write(to: iconset.appendingPathComponent(name))
-        } catch {
-            fail("could not write \(name): \(error.localizedDescription)")
-        }
-    }
-}
-
 try? FileManager.default.createDirectory(at: destination.deletingLastPathComponent(),
                                          withIntermediateDirectories: true)
-let iconutil = Process()
-iconutil.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
-iconutil.arguments = ["-c", "icns", iconset.path, "-o", destination.path]
-try iconutil.run()
-iconutil.waitUntilExit()
-guard iconutil.terminationStatus == 0 else { fail("iconutil failed") }
+
+func writeICNS() throws {
+    let iconset = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent("cursed-\(UUID().uuidString).iconset")
+    try? FileManager.default.createDirectory(at: iconset, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: iconset) }
+
+    for base in [16, 32, 128, 256, 512] {
+        for scale in [1, 2] {
+            let name = scale == 1 ? "icon_\(base)x\(base).png" : "icon_\(base)x\(base)@2x.png"
+            do {
+                try render(at: base * scale, bodyFraction: iconBodyFraction)
+                    .write(to: iconset.appendingPathComponent(name))
+            } catch {
+                fail("could not write \(name): \(error.localizedDescription)")
+            }
+        }
+    }
+
+    let iconutil = Process()
+    iconutil.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
+    iconutil.arguments = ["-c", "icns", iconset.path, "-o", destination.path]
+    try iconutil.run()
+    iconutil.waitUntilExit()
+    guard iconutil.terminationStatus == 0 else { fail("iconutil failed") }
+}
+
+func writePNG(at size: Int) throws {
+    try render(at: size, bodyFraction: 1).write(to: destination)
+}
+
+switch destination.pathExtension.lowercased() {
+case "icns":
+    if arguments.count == 4 { fail("a size applies to a PNG only; an .icns holds all of them") }
+    try writeICNS()
+case "png":
+    guard let size = Int(arguments.count == 4 ? arguments[3] : "512"), size > 0 else {
+        fail("size must be a positive whole number of pixels")
+    }
+    try writePNG(at: size)
+default:
+    fail("do not know how to write \(destination.lastPathComponent); expected .icns or .png")
+}
 
 let trimmed = Int(bounds.width)
 print("trimmed artwork to \(trimmed)x\(trimmed) of \(source.width), wrote \(destination.path)")
