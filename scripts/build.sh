@@ -14,6 +14,9 @@ echo "==> assembling app bundle"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$ROOT/.build/release/cursed" "$APP/Contents/MacOS/cursed"
+# Committed rather than built here: it changes only when the artwork does, and generating it needs
+# the source art. Run scripts/make-icon.swift after editing assets/icon.png.
+cp "$ROOT/Resources/cursed.icns" "$APP/Contents/Resources/cursed.icns"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -23,6 +26,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleExecutable</key>
+	<string>cursed</string>
+	<key>CFBundleIconFile</key>
 	<string>cursed</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.cursed.app</string>
