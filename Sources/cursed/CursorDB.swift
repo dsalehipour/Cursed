@@ -44,11 +44,24 @@ struct ConversationSnapshot {
     }
 }
 
+/// What walking a conversation's history turns up, beyond what its header row already says.
+struct ConversationHistory {
+    /// When you last said something here: a message you typed, or an answer you gave.
+    let spokeAt: Date?
+    /// A question is on screen in Cursor with no answer yet, so the conversation is stuck on you
+    /// rather than merely finished.
+    let awaitingAnswer: Bool
+
+    /// What a conversation looks like when the lookup is unavailable: silent on both counts, so
+    /// callers fall back to header timestamps and nothing is wrongly marked as waiting.
+    static let unknown = ConversationHistory(spokeAt: nil, awaitingAnswer: false)
+}
+
 final class CursorDB {
     private var handle: OpaquePointer?
     private var statement: OpaquePointer?
     private var selectionStatement: OpaquePointer?
-    private var interactionStatement: OpaquePointer?
+    private var historyStatement: OpaquePointer?
 
     /// `CURSED_DB` points the reader at a different database, which is how the timing-dependent
     /// states can be reproduced on demand rather than waited for.
@@ -83,28 +96,47 @@ final class CursorDB {
         LIMIT 40
         """
 
-    /// When you last said something in a conversation, which is not the same as when it last did
-    /// something, nor as when its current run began.
+    /// The two things a conversation's header cannot tell you, read in a single walk of its
+    /// history because the walk is the expensive part.
     ///
-    /// Two things count, and they are recorded very differently. A message you typed is its own
-    /// entry, `type: 1`. An answer to one of Cursor's in-chat questions is not an entry at all:
-    /// the question's tool call is simply marked answered in place, keeping the `createdAt` of
-    /// the moment it was *asked*, which can be many minutes before you got to it. The entry
-    /// immediately after an `askQuestionToolCall` is the nearest thing to a record of your reply,
-    /// since the model resumes the instant it has one, and it lands within a second or two.
+    /// **When you last spoke.** Two things count, recorded very differently. A message you typed
+    /// is its own entry, `type: 1`. An answer to one of Cursor's in-chat questions is not an entry
+    /// at all: the question's tool call is simply marked answered in place, keeping the
+    /// `createdAt` of the moment it was *asked*, which can be many minutes before you got to it.
+    /// The entry immediately after an `askQuestionToolCall` is the nearest thing to a record of
+    /// your reply, since the model resumes the instant it has one, and it lands within a second or
+    /// two. `LAG` is what makes that a single pass: it puts each entry next to the one before it,
+    /// so "the entry after a question" is a plain `WHERE` rather than a second walk.
     ///
-    /// `LAG` is what makes that a single pass: it puts each entry next to the one before it, so
-    /// "the entry after a question" is a plain `WHERE` rather than a second walk of the history.
-    private static let interactionSQL = """
-        SELECT CAST(strftime('%s', MAX(CASE WHEN t.type = 1 OR t.prevCase = 'askQuestionToolCall'
-                                            THEN t.createdAt END)) AS INTEGER) * 1000
-        FROM (SELECT json_extract(je.value, '$.type') AS type,
-                     json_extract(je.value, '$.createdAt') AS createdAt,
-                     LAG(json_extract(je.value, '$.grouping.toolCallCase'))
-                       OVER (ORDER BY je.key) AS prevCase
-              FROM cursorDiskKV d,
-                   json_each(json_extract(d.value, '$.fullConversationHeadersOnly')) je
-              WHERE d.key = 'composerData:' || ?1) t
+    /// **Whether a question is still waiting on you.** That is not in the history at all, only in
+    /// the question's own bubble, under `toolFormerData`. The field to read is
+    /// `additionalData.status`: `pending` while the question sits on screen, `submitted` once you
+    /// answer, `cancelled` if you wave it away. Its sibling `status` field is a trap — it reads
+    /// `completed` the entire time the question is unanswered, because what completed is the tool
+    /// call that posted the question, not the asking. Only the last question is worth consulting,
+    /// since any earlier one has necessarily been resolved to get past it.
+    private static let historySQL = """
+        WITH entry AS (
+          SELECT je.key AS idx,
+                 json_extract(je.value, '$.type') AS type,
+                 json_extract(je.value, '$.createdAt') AS createdAt,
+                 json_extract(je.value, '$.bubbleId') AS bubbleId,
+                 json_extract(je.value, '$.grouping.toolCallCase') AS toolCase,
+                 LAG(json_extract(je.value, '$.grouping.toolCallCase'))
+                   OVER (ORDER BY je.key) AS prevCase
+          FROM cursorDiskKV d,
+               json_each(json_extract(d.value, '$.fullConversationHeadersOnly')) je
+          WHERE d.key = 'composerData:' || ?1
+        )
+        SELECT CAST(strftime('%s', MAX(CASE WHEN type = 1 OR prevCase = 'askQuestionToolCall'
+                                            THEN createdAt END)) AS INTEGER) * 1000,
+               (SELECT json_extract(json_extract(b.value, '$.toolFormerData.additionalData'),
+                                    '$.status')
+                FROM cursorDiskKV b
+                WHERE b.key = 'bubbleId:' || ?1 || ':'
+                      || (SELECT bubbleId FROM entry WHERE toolCase = 'askQuestionToolCall'
+                          ORDER BY idx DESC LIMIT 1))
+        FROM entry
         """
 
     /// Cursor records the chat you have open here and rewrites it the moment you switch, which
@@ -147,28 +179,29 @@ final class CursorDB {
             selection = nil
         }
 
-        var interaction: OpaquePointer?
-        if sqlite3_prepare_v2(db, Self.interactionSQL, -1, &interaction, nil) != SQLITE_OK {
-            Log.write("last-interaction lookup unavailable; timers will count from the run start")
-            sqlite3_finalize(interaction)
-            interaction = nil
+        var history: OpaquePointer?
+        if sqlite3_prepare_v2(db, Self.historySQL, -1, &history, nil) != SQLITE_OK {
+            Log.write("history lookup unavailable; timers will count from the run start and"
+                      + " unanswered questions will not be marked")
+            sqlite3_finalize(history)
+            history = nil
         }
 
         handle = db
         statement = stmt
         selectionStatement = selection
-        interactionStatement = interaction
+        historyStatement = history
         return true
     }
 
     func close() {
         sqlite3_finalize(statement)
         sqlite3_finalize(selectionStatement)
-        sqlite3_finalize(interactionStatement)
+        sqlite3_finalize(historyStatement)
         sqlite3_close(handle)
         statement = nil
         selectionStatement = nil
-        interactionStatement = nil
+        historyStatement = nil
         handle = nil
     }
 
@@ -223,13 +256,14 @@ final class CursorDB {
     /// Costs roughly a hundred times what the main poll does, because it walks every entry in the
     /// conversation's history rather than reading a few columns. Callers are meant to keep the
     /// answer rather than ask again each second: it moves only when you do.
-    func lastInteraction(with id: String) -> Date? {
-        guard open(), let interactionStatement else { return nil }
-        sqlite3_reset(interactionStatement)
-        defer { sqlite3_reset(interactionStatement) }
-        sqlite3_bind_text(interactionStatement, 1, id, -1, Self.transient)
-        guard sqlite3_step(interactionStatement) == SQLITE_ROW else { return nil }
-        return date(interactionStatement, 0)
+    func history(of id: String) -> ConversationHistory {
+        guard open(), let historyStatement else { return ConversationHistory.unknown }
+        sqlite3_reset(historyStatement)
+        defer { sqlite3_reset(historyStatement) }
+        sqlite3_bind_text(historyStatement, 1, id, -1, Self.transient)
+        guard sqlite3_step(historyStatement) == SQLITE_ROW else { return .unknown }
+        return ConversationHistory(spokeAt: date(historyStatement, 0),
+                                   awaitingAnswer: text(historyStatement, 1) == "pending")
     }
 
     /// SQLite must copy the bound string: the Swift one is not guaranteed to outlive the call.

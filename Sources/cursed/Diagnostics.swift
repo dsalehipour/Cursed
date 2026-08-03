@@ -35,11 +35,11 @@ enum Diagnostics {
             case .stalled: label = "STALLED"
             case .done(let completed): label = completed ? "done" : "aborted"
             }
-            let spoke = db.lastInteraction(with: snapshot.id)
-                ?? snapshot.unfinishedRunAt ?? snapshot.lastRunStart
+            let history = db.history(of: snapshot.id)
+            let spoke = history.spokeAt ?? snapshot.unfinishedRunAt ?? snapshot.lastRunStart
             let asked = now.timeIntervalSince(spoke)
             print(line(
-                label,
+                history.awaitingAnswer ? "ASKING" : label,
                 String(snapshot.name.prefix(31)),
                 snapshot.project,
                 Format.duration(max(0, asked)),
@@ -70,9 +70,9 @@ enum Diagnostics {
         // every few seconds each, not once per poll.
         guard let sample = db.fetch(since: 2 * 60 * 60).first else { return }
         let anchorStart = Date()
-        for _ in 0..<iterations { _ = db.lastInteraction(with: sample.id) }
+        for _ in 0..<iterations { _ = db.history(of: sample.id) }
         let each = Date().timeIntervalSince(anchorStart) / Double(iterations) * 1000
-        print(String(format: "last-interaction lookup: %.2f ms each, for \"%@\"",
+        print(String(format: "history lookup: %.2f ms each, for \"%@\"",
                      each, sample.name as NSString))
     }
 

@@ -47,13 +47,22 @@ anywhere. Its position is remembered.
 
 ## What the states mean
 
-There are three, and only one of them draws attention:
+There are four, and two of them draw attention:
 
 | Row | Meaning |
 | --- | --- |
 | Plain dark text, no dot | A run is in flight. The timer counts up live. |
+| **Amber dot** | It asked you a question and is waiting on the answer. |
 | **Green dot** | It finished and you have not seen it. |
 | Light grey text, no dot | Dealt with. You read it in Cursor, you clicked it, or you stopped it yourself. |
+
+Amber and green mean quite different things, which is why the panel spends its only two colours on
+them. Green says work is there to look at. Amber says work has *stopped* and cannot go anywhere
+without you — so amber sorts above everything, including runs in flight, since it is the only row
+in the panel that is genuinely blocked.
+
+Amber is also the one state that being seen does not clear, because reading a question is not
+answering it. It goes when you reply and at no other point.
 
 The time on the right is how long ago **you** last said something to that conversation — a message
 you typed, or an answer you gave one of Cursor's in-chat questions. It is not how long the run has
@@ -72,8 +81,14 @@ Once a row is dealt with it becomes ordinary history and disappears half an hour
 from the moment you dealt with it, so reading something that has been waiting all afternoon leaves
 it on screen as grey history for a while rather than deleting it out from under the click.
 
-A completion plays a soft chime. Runs you aborted do not, on the grounds that you cannot have
-failed to notice something you stopped by hand.
+A completion plays a soft chime, and a question plays a different one, so the two can be told apart
+without looking. Runs you aborted play nothing, on the grounds that you cannot have failed to
+notice something you stopped by hand.
+
+Asking a question ends the run that asked it, so a conversation waiting on you looks, in the
+database, exactly like one that finished with nothing left to say. That is why a question is
+announced as a question rather than twice over as a completion: the run ending is taken as the cue
+to go and check whether it ended by asking.
 
 Only runs that finish while the app is watching can be unseen. Anything already finished when it
 launches is adopted as seen: the app never showed you a dot for it, and since none of this is
@@ -194,6 +209,21 @@ It is the bare id of the chat currently on screen, rewritten the moment you swit
 polling it at 200ms while switching chats, the new value lands within a second, so a poll every
 one to three seconds sees it effectively immediately. The key is global rather than per-window,
 so with several windows open it names the last chat you selected in any of them.
+
+Whether a question is still waiting on you is not in either of those places. It lives in the
+question's own bubble, under `toolFormerData`, and the field to read is `additionalData.status`:
+
+```
+{"status":"pending"}     the question is on screen, waiting for you
+{"status":"submitted"}   you answered it
+{"status":"cancelled"}   you waved it away
+```
+
+The sibling `status` field alongside it is a trap: it reads `completed` for the entire time a
+question sits there unanswered, because what completed is the tool call that *posted* the question,
+not the asking. Watching a real question through its whole life, by polling every second from
+before it appeared until after it was answered, is what established the sequence — `loading`, then
+`completed` with `additionalData` pending, then submitted.
 
 Everything is opened read-only, so Cursor never contends with this app for a write lock.
 

@@ -32,31 +32,31 @@ extension Attention {
     /// help to stay readable rather than merely visible.
     var titleOpacity: Double {
         switch self {
-        case .working, .unseen: return 1
+        case .asking, .working, .unseen: return 1
         case .settled: return 0.5
         }
     }
 
     var projectOpacity: Double {
         switch self {
-        case .working, .unseen: return 0.85
+        case .asking, .working, .unseen: return 0.85
         case .settled: return 0.4
         }
     }
 
     var timeOpacity: Double {
         switch self {
-        case .working, .unseen: return 0.62
+        case .asking, .working, .unseen: return 0.62
         case .settled: return 0.36
         }
     }
 
-    /// Weight carries the same signal as the dot: a finished run you have not seen is the only
-    /// thing in the panel set in bold. A run still going, and one you have already read, both
-    /// stay regular, so the panel only thickens when something is actually waiting on you.
+    /// Weight carries the same signal as the dot: bold is reserved for the two states that want
+    /// something from you. A run still going, and one you have already dealt with, both stay
+    /// regular, so the panel only thickens when it is actually asking.
     var weight: Font.Weight {
         switch self {
-        case .unseen: return .bold
+        case .asking, .unseen: return .bold
         case .working, .settled: return .regular
         }
     }
@@ -65,7 +65,7 @@ extension Attention {
     /// step above the rest of the row until the row goes bold with everything else.
     var projectWeight: Font.Weight {
         switch self {
-        case .unseen: return .bold
+        case .asking, .unseen: return .bold
         case .working, .settled: return .medium
         }
     }
@@ -74,12 +74,27 @@ extension Attention {
     /// where they meet.
     var glassTint: Color? {
         switch self {
-        case .unseen: return Self.dotColor.opacity(0.1)
+        case .asking: return Self.askColor.opacity(0.1)
+        case .unseen: return Self.doneColor.opacity(0.1)
         case .working, .settled: return nil
         }
     }
 
-    static let dotColor = Color(red: 0.22, green: 0.80, blue: 0.46)
+    /// Never more than one dot in a row: a question outranks a completion, so the two colours
+    /// cannot collide.
+    var dot: Color? {
+        switch self {
+        case .asking: return Self.askColor
+        case .unseen: return Self.doneColor
+        case .working, .settled: return nil
+        }
+    }
+
+    /// Green reads as "done, go and look". Amber reads as "stopped, and it needs you" — the same
+    /// distinction a traffic light makes, and worth the second colour in an otherwise monochrome
+    /// panel because the two ask for quite different things.
+    static let doneColor = Color(red: 0.22, green: 0.80, blue: 0.46)
+    static let askColor = Color(red: 1.0, green: 0.62, blue: 0.08)
 }
 
 struct ContentView: View {
@@ -182,8 +197,8 @@ private struct RowView: View {
             // The gutter is reserved whether or not a dot is in it, so text stays on the same
             // line down the panel and nothing shifts sideways when a run finishes.
             Group {
-                if row.attention == .unseen {
-                    Circle().fill(Attention.dotColor)
+                if let dot = row.attention.dot {
+                    Circle().fill(dot)
                 }
             }
             .frame(width: 7, height: 7)

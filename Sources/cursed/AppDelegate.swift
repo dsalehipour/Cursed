@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         store.onFinished = { [weak self] row in self?.announce(row) }
+        store.onAsked = { [weak self] row in self?.announceQuestion(row) }
 
         let content = ContentView(
             store: store,
@@ -97,6 +98,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // An aborted run was stopped by hand, so it is not news worth a chime.
         guard completed, let sound = NSSound(named: "Glass") else { return }
         sound.volume = 0.35
+        sound.play()
+    }
+
+    /// Deliberately not the completion chime. The two mean different things — one says work is
+    /// there to look at, the other says work has stopped and cannot go on without you — and a
+    /// question is the one you would want to answer straight away, so it is worth being able to
+    /// tell them apart without looking.
+    private func announceQuestion(_ row: Store.Row) {
+        log("asking: \(row.title) (\(row.project))")
+        guard let sound = NSSound(named: "Purr") else { return }
+        sound.volume = 0.5
         sound.play()
     }
 
