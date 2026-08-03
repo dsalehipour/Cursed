@@ -65,7 +65,8 @@ final class FloatingPanel: NSPanel {
         }
     }
 
-    /// Remembers where the pointer and the window were as a drag starts.
+    /// Remembers where the pointer and the window were as a press begins, before anything is known
+    /// about whether it will turn into a drag.
     func beginDrag(from pointer: NSPoint) {
         dragAnchor = (pointer: pointer, topLeft: NSPoint(x: frame.minX, y: frame.maxY))
     }

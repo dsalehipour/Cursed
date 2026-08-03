@@ -5,17 +5,18 @@ import SwiftUI
 /// here and nowhere else. The panel watches this press to know when to move; the row under the
 /// pointer watches it to know whether it was still a click when the button came up.
 ///
-/// Owning the threshold is the whole point. `WindowDragGesture`, which used to do the moving,
-/// hands off to AppKit after two or three points of travel — well inside the wobble of an ordinary
-/// click, and far short of the twenty points a row was willing to forgive. Every press that landed
-/// between the two both nudged the window and opened whatever it started on.
+/// A press that travels is a reposition, and a press that does not is a click. Nothing sits
+/// between the two, which is the point: any band of travel wide enough to forgive a shaky click is
+/// also wide enough to swallow a deliberate nudge, and a press landing in it does the wrong thing
+/// whichever way it is read.
 @MainActor
 final class PanelDrag {
     /// Assigned once the window exists, which is after the view tree that reads this is built.
     weak var panel: FloatingPanel?
 
-    /// Generous enough to absorb the wobble in a real click, far short of a deliberate reposition.
-    private static let slop: CGFloat = 20
+    /// Below a point is jitter in the hardware rather than movement in the hand. Holding the line
+    /// at zero would let a trackpad's own noise turn every click into a drag of no distance.
+    private static let minimumTravel: CGFloat = 1
 
     /// Where on screen the press began. Screen coordinates are load-bearing: once the panel is
     /// moving it travels with the pointer, so a view-local translation stays near zero and cannot
@@ -39,19 +40,25 @@ final class PanelDrag {
         guard let pressedAt else {
             self.pressedAt = point
             isDragging = false
+            // Anchored on the press itself. With no threshold to cross there is no dead zone to
+            // absorb, so the window sits exactly under the pointer from the first point it travels.
+            panel?.beginDrag(from: point)
             return
         }
-        if isDragging {
-            panel?.continueDrag(to: point)
-        } else if hypot(point.x - pressedAt.x, point.y - pressedAt.y) >= Self.slop {
-            isDragging = true
-            // Anchored where the slop was crossed rather than where the press began, so the panel
-            // picks up from under the pointer instead of jumping to meet it.
-            panel?.beginDrag(from: point)
-        }
+        // Sticky once set: a press that wandered and came home again was still a drag, and the
+        // window has to be able to follow it back.
+        guard isDragging || hypot(point.x - pressedAt.x, point.y - pressedAt.y) >= Self.minimumTravel
+        else { return }
+        isDragging = true
+        panel?.continueDrag(to: point)
     }
 
+    /// A gesture can end without the press having ended: rows come and go under the pointer as the
+    /// store polls, and a row torn down mid-drag takes its gesture with it. Ending the press there
+    /// would start a fresh one on the next event, and a drag that happened to finish within a point
+    /// of that moment would be read as a click on whatever row had replaced the one pressed.
     func release() {
+        guard NSEvent.pressedMouseButtons & 1 == 0 else { return }
         pressedAt = nil
     }
 }

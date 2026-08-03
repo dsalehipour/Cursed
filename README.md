@@ -143,13 +143,18 @@ of travel, which no row can match without becoming just as fragile — so every 
 few points and the twenty a row was willing to forgive did both at once, shifting the panel and
 opening the conversation underneath it.
 
-So the panel moves itself. One press is tracked in one place, `PanelDrag`, and a single threshold
-settles what it was: under 20 points of travel it is a click and the window never moves at all,
-past that it is a reposition and no row will open. Travel is measured **in screen coordinates**,
-which is what makes it measurable at all — once the window is moving it travels with the pointer,
-so the view-local translation stays near zero and cannot tell the two apart. The window is then
-placed from the pointer's total travel rather than by accumulating deltas, so a dropped event
-costs a frame of lag instead of leaving the panel permanently offset from the cursor.
+Any band of travel wide enough to forgive a shaky click is wide enough to swallow a deliberate
+nudge, so there is no band. The panel moves itself, one press is tracked in one place
+(`PanelDrag`), and a press that travels at all is a reposition while a press that does not is a
+click. The floor is a single point, below which it is jitter in the hardware rather than movement
+in the hand; at zero, a trackpad's own noise would turn every click into a drag of no distance.
+
+Travel is measured **in screen coordinates**, which is what makes it measurable at all — once the
+window is moving it travels with the pointer, so the view-local translation stays near zero and
+cannot tell the two apart. The window is placed from the pointer's total travel rather than by
+accumulating deltas, so a dropped event costs a frame of lag instead of leaving the panel
+permanently offset from the cursor, and it is anchored on the press itself, so there is no dead
+zone to cross before it comes with you.
 
 ## How it knows
 

@@ -165,15 +165,13 @@ private struct RowView: View {
     var body: some View {
         content
             .contentShape(Rectangle())
-            // Feeds the same press the panel is watching, so the row cannot reach a different
-            // verdict about it than the panel does.
+            // Only reads the verdict on the press the panel is already tracking. A row that also
+            // drove it could end the press early — rows are torn down and rebuilt under the
+            // pointer as the store polls — and leave the tail of a drag looking like a click.
             .simultaneousGesture(
                 DragGesture(minimumDistance: 0)
-                    .onChanged { _ in drag.track() }
                     .onEnded { _ in
-                        let wasDrag = drag.isDragging
-                        drag.release()
-                        guard !wasDrag else { return }
+                        guard !drag.isDragging else { return }
                         onSelect(row)
                     }
             )
