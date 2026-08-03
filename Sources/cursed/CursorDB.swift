@@ -96,21 +96,45 @@ final class CursorDB {
     /// window would stay invisible for the first moments of its next run — exactly when you are
     /// most likely to be looking. `lastUpdatedAt` is set the instant a run starts and closes
     /// that gap.
+    ///
+    /// The blob is optional, because it lands a beat after the header does. A chat you sent
+    /// seconds ago is already in `composerHeaders` with nothing yet under `composerData:`, and
+    /// requiring the two kept the newest thing you had running off the panel until Cursor got
+    /// around to writing it. The header can stand in: it carries the project and the subtitle
+    /// itself, agreeing with the blob's copies wherever both exist.
+    ///
+    /// Run state is the one thing only the blob knows, and its absence is itself informative.
+    /// `unfinishedRunAt` records a run's start and is cleared to record its end, so no blob at all
+    /// means a run started at `lastUpdatedAt` with nothing yet saying it ended — which is the
+    /// truth of a message you just sent. Should it have finished in the meantime, the blob arrives
+    /// saying so within the second; should a header somehow never gain one, the stall timers
+    /// retire it as they would any other run that stopped reporting.
+    ///
+    /// A chat that new has no heartbeat yet either, and `MAX` of a null is null, which sorted it
+    /// below every conversation it had just beaten — hence the coalesced ordering key.
+    ///
+    /// A draft is the one header that must not be read this way. It has no blob either, having
+    /// never run at all, and inferring a run would put a row on the panel for a composer box you
+    /// typed a word into and abandoned.
     private static let sql = """
         SELECT h.composerId,
                json_extract(h.value, '$.name'),
-               json_extract(d.value, '$.workspaceIdentifier.uri.fsPath'),
-               json_extract(d.value, '$.unfinishedRunAt'),
+               COALESCE(json_extract(d.value, '$.workspaceIdentifier.uri.fsPath'),
+                        json_extract(h.value, '$.workspaceIdentifier.uri.fsPath')),
+               CASE WHEN d.key IS NULL THEN h.lastUpdatedAt
+                    ELSE json_extract(d.value, '$.unfinishedRunAt') END,
                json_extract(d.value, '$.status'),
                h.lastUpdatedAt,
                h.checkpointAt,
-               json_extract(d.value, '$.subtitle')
+               COALESCE(json_extract(d.value, '$.subtitle'),
+                        json_extract(h.value, '$.subtitle'))
         FROM composerHeaders h
-        JOIN cursorDiskKV d ON d.key = 'composerData:' || h.composerId
+        LEFT JOIN cursorDiskKV d ON d.key = 'composerData:' || h.composerId
         WHERE h.isArchived = 0
           AND h.isSubagent = 0
+          AND COALESCE(json_extract(h.value, '$.isDraft'), 0) = 0
           AND (h.checkpointAt > ?1 OR h.lastUpdatedAt > ?1)
-        ORDER BY MAX(h.checkpointAt, h.lastUpdatedAt) DESC
+        ORDER BY MAX(COALESCE(h.checkpointAt, 0), COALESCE(h.lastUpdatedAt, 0)) DESC
         LIMIT 40
         """
 

@@ -196,6 +196,12 @@ From `composerHeaders`, `lastUpdatedAt` is when the most recent run began and `c
 is a heartbeat written while a conversation is live, which doubles as the finish time of a
 completed run and as the liveness check behind the stalled state.
 
+The two are not written together. A chat you have just sent exists as a header for a while before
+its blob does, so the blob is treated as optional: the header carries its own copy of the project
+and the subtitle, and a header with no blob at all is read as a run that started at `lastUpdatedAt`
+and has nothing yet to say it ended. That is what a message sent seconds ago is. Drafts are skipped
+rather than read this way, being chats that have not run at all.
+
 ### Working out when you last said something
 
 Neither of those is when *you* last spoke, which is what the timer counts from, and the difference
