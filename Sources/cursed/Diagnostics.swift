@@ -11,7 +11,9 @@ enum Diagnostics {
         }
 
         let now = Date()
-        let snapshots = db.fetch(since: 24 * 60 * 60, now: now)
+        let snapshots = (db.fetch(since: 24 * 60 * 60, now: now)
+            + ChatGPTDB().fetch(since: 24 * 60 * 60, now: now))
+            .sorted { $0.checkpoint > $1.checkpoint }
         guard !snapshots.isEmpty else {
             print("no conversations active in the last 24h")
             return
@@ -24,7 +26,7 @@ enum Diagnostics {
             print("")
         }
 
-        print(line("STATUS", "TITLE", "PROJECT", "ASKED", "QUIET", "ACTIVITY"))
+        print(line("STATUS", "TITLE", "PROJECT", "APP", "ASKED", "QUIET", "ACTIVITY"))
         for snapshot in snapshots {
             // Deliberately the panel's own derivation rather than a second copy of it, so this
             // can be trusted to explain what the panel is doing.
@@ -35,13 +37,14 @@ enum Diagnostics {
             case .stalled: label = "STALLED"
             case .done(let completed): label = completed ? "done" : "aborted"
             }
-            let history = db.history(of: snapshot.id)
+            let history = snapshot.sourceHistory ?? db.history(of: snapshot.id)
             let spoke = history.spokeAt ?? snapshot.unfinishedRunAt ?? snapshot.lastRunStart
             let asked = now.timeIntervalSince(spoke)
             print(line(
                 history.awaitingAnswer ? "ASKING" : label,
                 String(snapshot.name.prefix(31)),
                 snapshot.project,
+                snapshot.source == .cursor ? "Cursor" : "ChatGPT",
                 Format.duration(max(0, asked)),
                 Format.duration(now.timeIntervalSince(snapshot.lastSignOfLife)),
                 String((snapshot.subtitle ?? "").prefix(30))
@@ -76,9 +79,9 @@ enum Diagnostics {
                      each, sample.name as NSString))
     }
 
-    private static func line(_ status: String, _ title: String, _ project: String,
+    private static func line(_ status: String, _ title: String, _ project: String, _ app: String,
                              _ asked: String, _ quiet: String, _ activity: String) -> String {
-        pad(status, 9) + pad(title, 33) + pad(project, 18) + pad(asked, 10)
+        pad(status, 9) + pad(title, 33) + pad(project, 18) + pad(app, 9) + pad(asked, 10)
             + pad(quiet, 9) + activity
     }
 

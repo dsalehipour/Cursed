@@ -15,6 +15,18 @@ import SQLite3
 ///
 /// Everything is opened read-only, so Cursor never contends with us for a write lock.
 struct ConversationSnapshot {
+    enum Source: String {
+        case cursor
+        case chatGPT
+
+        var bundleID: String {
+            switch self {
+            case .cursor: return CursorLink.bundleID
+            case .chatGPT: return ChatGPTLink.bundleID
+            }
+        }
+    }
+
     let id: String
     let name: String
     let workspacePath: String?
@@ -27,6 +39,12 @@ struct ConversationSnapshot {
     let checkpoint: Date
     /// Cursor's own one-line description of recent activity, e.g. "Edited main.swift".
     let subtitle: String?
+    /// Kept separate so the Cursor reader and all of its existing SQL remain unchanged.
+    var source: Source = .cursor
+    /// Sources which already have a cheap transcript-derived answer can provide it here.
+    var sourceHistory: ConversationHistory? = nil
+    /// The source application's own unread state, when it publishes one.
+    var sourceIsUnread: Bool? = nil
 
     var project: String {
         guard let workspacePath, !workspacePath.isEmpty else { return "home" }

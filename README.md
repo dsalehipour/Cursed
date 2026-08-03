@@ -1,7 +1,8 @@
 # cursed
 
-A tiny always-on-top window showing which Cursor conversations are running, how long ago you last
-said anything to each of them, and which ones finished while you were looking somewhere else.
+A tiny always-on-top window showing which Cursor and ChatGPT Mac app conversations are running,
+how long ago you last said anything to each of them, and which ones finished while you were
+looking somewhere else.
 
 ```
 ┌────────────────────────────────────────────┐
@@ -143,6 +144,19 @@ being dragged it travels with the pointer, so the view-local translation stays n
 cannot tell the two apart. Under 20 points is a click, more is a reposition.
 
 ## How it knows
+
+Both integrations are read-only and independent. If either app or its local database is absent,
+the other continues to work normally.
+
+### ChatGPT Mac app
+
+The ChatGPT Mac app's Codex tasks are indexed in `~/.codex/state_5.sqlite`. Their live lifecycle
+events are appended to the rollout JSONL path recorded with each task. `task_started`,
+`task_complete`, user-message, and question-tool events provide the same run, timer, completion,
+and waiting-for-you signals used by the panel. Clicking one uses ChatGPT's published
+`codex://threads/<id>` link, so it opens the exact task without Accessibility UI scripting.
+
+### Cursor
 
 Cursor keeps conversation state in a SQLite database at
 

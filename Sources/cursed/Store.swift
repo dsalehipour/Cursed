@@ -44,6 +44,7 @@ final class Store: ObservableObject {
         var sinceLastMessage: TimeInterval
         /// Last time Cursor touched the conversation; for a finished run this is when it ended.
         var lastActivity: Date
+        var source: ConversationSnapshot.Source = .cursor
     }
 
     @Published private(set) var rows: [Row] = []
@@ -59,6 +60,7 @@ final class Store: ObservableObject {
     private let queryWindow: TimeInterval = 2 * 60 * 60
 
     private let db = CursorDB()
+    private let chatGPTDB = ChatGPTDB()
     private var timer: Timer?
     private var activeIDs: Set<String> = []
     /// When each conversation was last in front of you. A timestamp rather than a flag, because
@@ -171,6 +173,7 @@ final class Store: ObservableObject {
     private func poll() {
         let now = Date()
         let fetched = db.fetch(since: queryWindow, now: now)
+            + chatGPTDB.fetch(since: queryWindow, now: now)
         // A completion you have not seen outlives the query window. Once the conversation stops
         // being fetched it is served from the last snapshot taken of it, so being away for two
         // hours cannot make a waiting dot disappear.
@@ -196,6 +199,7 @@ final class Store: ObservableObject {
         // Before the rows are built, so a conversation you are reading right now is already
         // marked seen by the time this poll decides whether to give it a dot.
         noteConversationOnScreen(now: now, in: snapshots)
+        noteChatGPTReadReceipts(now: now, in: snapshots)
 
         var visible: [Row] = []
         var stillActive: Set<String> = []
@@ -327,6 +331,15 @@ final class Store: ObservableObject {
         }
     }
 
+    /// ChatGPT publishes an explicit unread-id set. It remains authoritative even if you switch
+    /// away before our next poll, unlike a frontmost-window inference.
+    private func noteChatGPTReadReceipts(now: Date, in snapshots: [ConversationSnapshot]) {
+        for snapshot in snapshots where snapshot.source == .chatGPT
+            && snapshot.sourceIsUnread == false {
+            lastViewed[snapshot.id] = now
+        }
+    }
+
     /// A finished run keeps its dot until you have actually seen it — no sooner, and on no timer.
     /// Letting one lapse on age would have the panel quietly decide you had noticed something you
     /// had not, which is the one thing it exists to prevent. An aborted run is the exception and
@@ -361,7 +374,8 @@ final class Store: ObservableObject {
             status: status,
             attention: attention,
             sinceLastMessage: max(0, now.timeIntervalSince(asked)),
-            lastActivity: snapshot.checkpoint
+            lastActivity: snapshot.checkpoint,
+            source: snapshot.source
         )
     }
 
@@ -383,6 +397,13 @@ final class Store: ObservableObject {
     /// not begin a new run either, so nothing else would notice you had replied.
     private func anchor(for snapshot: ConversationSnapshot, active: Bool,
                         force: Bool, now: Date) -> Anchor {
+        if let history = snapshot.sourceHistory {
+            return Anchor(spokeAt: history.spokeAt,
+                          awaitingAnswer: history.awaitingAnswer,
+                          runStart: snapshot.lastRunStart,
+                          signOfLife: snapshot.lastSignOfLife,
+                          checkedAt: now)
+        }
         if !force, let cached = anchors[snapshot.id], cached.runStart == snapshot.lastRunStart {
             let stirred = cached.signOfLife != snapshot.lastSignOfLife
                 || active || cached.awaitingAnswer

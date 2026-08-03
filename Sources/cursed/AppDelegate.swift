@@ -19,7 +19,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             onSelect: { [weak self] row in
                 self?.store.acknowledge(row.id)
                 self?.log("reveal \(row.project): \(row.title)")
-                CursorLink.reveal(project: row.project, title: row.title)
+                switch row.source {
+                case .cursor:
+                    CursorLink.reveal(project: row.project, title: row.title)
+                case .chatGPT:
+                    ChatGPTLink.reveal(id: row.id)
+                }
             },
             onDismiss: { [weak self] row in
                 self?.log("dismissed \(row.project): \(row.title)")
