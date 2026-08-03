@@ -7,15 +7,17 @@
 **Which of your Cursor and ChatGPT conversations are running, how long ago you last said anything
 to each of them, and which ones finished while you were looking somewhere else.**
 
-<img src="assets/panel.jpg" width="820"
+<img src="assets/panel-unseen.jpg" width="820"
   alt="The cursed panel floating over a desktop, listing five conversations by project and title with the time since you last spoke to each: one run still going at the top, then two carrying a green dot for having finished unseen, then two faded to grey as dealt with">
 
-<sub>A tiny always-on-top window: one run in flight, two completions you have not seen, two already dealt with.</sub>
+<sub>A tiny always-on-top window: one run in flight, two green dots for work that finished while you
+were away, two rows already dealt with.</sub>
 
 <br>
 
 `macOS 26` · `Swift 6` · `no dependencies` · `read-only` · `~0.1% of a core`
 
+[**Download**](https://github.com/dsalehipour/Cursed/releases/latest/download/cursed.zip) ·
 [Install](#install) · [States](#what-the-states-mean) · [Dragging](#clicking-versus-dragging) ·
 [How it knows](#how-it-knows) · [Performance](#performance) · [Development](#development)
 
@@ -35,8 +37,15 @@ single green dot.
 
 ## Install
 
-Needs macOS 26 and a Swift 6 toolchain. Cursor and the ChatGPT Mac app are both optional — the
-panel reads whichever of them is there.
+Apple Silicon, macOS 26 or later. Cursor and the ChatGPT Mac app are both optional — the panel
+reads whichever of them is there.
+
+[**Download the latest release**](https://github.com/dsalehipour/Cursed/releases/latest/download/cursed.zip),
+unzip it, and drag `cursed.app` to Applications. macOS refuses the first launch, because the app is
+signed but not notarized by Apple: go to **System Settings › Privacy & Security**, scroll to
+Security, and click **Open Anyway**, which is offered for about an hour after the refusal.
+
+Or build it, which needs a Swift 6 toolchain:
 
 ```bash
 scripts/create-signing-identity.sh   # once per machine, see below
@@ -98,6 +107,16 @@ Amber and green mean quite different things, which is why the panel spends its o
 them. Green says work is there to look at. Amber says work has *stopped* and cannot go anywhere
 without you — so amber sorts above everything, including runs in flight, since it is the only row
 in the panel that is genuinely blocked.
+
+<div align="center">
+
+<img src="assets/panel-asking.jpg" width="820"
+  alt="The cursed panel with two rows carrying an amber dot for having asked a question, sitting above a run still in flight, with three faded rows of history below them">
+
+<sub>The other mark, on the same panel: two conversations have stopped to ask something, and both
+sit above the live run beneath them even though its timer is the most recent on screen.</sub>
+
+</div>
 
 Amber is also the one state that being seen does not clear, because reading a question is not
 answering it. It goes when you reply and at no other point.
@@ -357,6 +376,16 @@ CURSED_DB=/tmp/fixture.vscdb swift run cursed --list
 what the panel is showing rather than offering a second opinion.
 
 Logs go to `~/Library/Logs/cursed.log`, including a line each time a run finishes.
+
+```bash
+scripts/release.sh          # build, package, tag, and publish a GitHub release
+```
+
+The asset is always called `cursed.zip`, which is what lets the download link above name the latest
+release without ever being edited. The tag comes from `CFBundleShortVersionString` in
+`scripts/build.sh`, so bumping that one line is how a new version gets cut. Releases are signed with
+the same local certificate as local builds, deliberately: macOS pins the Accessibility grant to the
+signature, and a signature that changed each release would make everyone re-approve it each time.
 
 ## Limitations
 
