@@ -106,12 +106,6 @@ struct ContentView: View {
 
     @Namespace private var glass
 
-    /// Structural changes should animate; the per-second timer tick should not. Keying the
-    /// animation on identity and state only is what keeps the morph from firing every second.
-    private var shape: [String] {
-        store.rows.map { "\($0.id):\($0.attention.rawValue)" }
-    }
-
     var body: some View {
         GlassEffectContainer(spacing: 20) {
             VStack(spacing: Metrics.rowSpacing) {
@@ -143,7 +137,10 @@ struct ContentView: View {
         // with — as the one place the panel could not be picked up from.
         .contentShape(Rectangle())
         .simultaneousGesture(drag.gesture)
-        .animation(.smooth(duration: 0.5, extraBounce: 0.18), value: shape)
+        // Reserved for news. A run starting, a row settling, the timers counting up: all of it
+        // arrives without motion, because a panel that rearranges itself for every change is one
+        // you have to keep re-reading to find out that nothing has happened.
+        .animation(.smooth(duration: 0.5, extraBounce: 0.18), value: store.announcements)
         .contextMenu {
             Button("Quit cursed", action: onQuit)
         }

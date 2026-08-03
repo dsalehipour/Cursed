@@ -49,6 +49,12 @@ final class Store: ObservableObject {
 
     @Published private(set) var rows: [Row] = []
 
+    /// Counts the only two changes the panel treats as news: a run finishing, and a run stopping to
+    /// ask. It is what the layout animates on, so the rows move for exactly the events that would
+    /// also have chimed, and sit still for a run merely starting or going quiet. A count rather
+    /// than a flag, because two completions in a row are two separate pieces of news.
+    @Published private(set) var announcements = 0
+
     /// How long a finished conversation stays listed at all, counted from when it finished.
     private let doneVisibility: TimeInterval = 30 * 60
     /// An open run whose heartbeat is older than this is reported as stalled. The heartbeat can
@@ -256,12 +262,18 @@ final class Store: ObservableObject {
 
             let entry = row(snapshot, status: status, attention: attention,
                             spokeAt: anchor.spokeAt, now: now)
-            if justFinished { onFinished?(entry) }
+            if justFinished {
+                announcements += 1
+                onFinished?(entry)
+            }
             if attention == .asking {
                 stillAsking.insert(snapshot.id)
                 // Nothing is announced on the first poll: a question already on screen when the
                 // app started is not news, in the same way a run finished before then is not.
-                if !askingIDs.contains(snapshot.id), !firstPoll { onAsked?(entry) }
+                if !askingIDs.contains(snapshot.id), !firstPoll {
+                    announcements += 1
+                    onAsked?(entry)
+                }
             }
             visible.append(entry)
         }
