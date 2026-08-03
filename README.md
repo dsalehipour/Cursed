@@ -8,9 +8,9 @@
 to each of them, and which ones finished while you were looking somewhere else.**
 
 <img src="assets/panel.jpg" width="820"
-  alt="The cursed panel floating over a desktop, listing four conversations, each with its project, title, and the time since you last spoke to it">
+  alt="The cursed panel floating over a desktop, listing five conversations by project and title with the time since you last spoke to each: one run still going at the top, then two carrying a green dot for having finished unseen, then two faded to grey as dealt with">
 
-<sub>A tiny always-on-top window. Every row is its own piece of Liquid Glass, merged into one surface.</sub>
+<sub>A tiny always-on-top window: one run in flight, two completions you have not seen, two already dealt with.</sub>
 
 <br>
 
