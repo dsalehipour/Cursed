@@ -43,8 +43,8 @@ Start it automatically at login:
 scripts/install-login-item.sh     # undo with uninstall-login-item.sh
 ```
 
-You can also right-click a row to dismiss it, right-click the window to quit, and drag it
-anywhere. Its position is remembered.
+There is a menu bar item to quit from. You can also right-click a row to dismiss it, right-click
+the window to quit, and drag it anywhere. Its position is remembered.
 
 ## What the states mean
 

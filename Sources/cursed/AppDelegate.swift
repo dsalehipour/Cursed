@@ -6,6 +6,7 @@ import Combine
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let store = Store()
     private let drag = PanelDrag()
+    private var menuBar: MenuBar!
     private var panel: FloatingPanel!
     private var cancellables = Set<AnyCancellable>()
     /// Snapshot runs are throwaway windows and must not overwrite the real one's position.
@@ -42,6 +43,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         drag.panel = panel
         panel.restorePosition(defaultSize: size)
         panel.orderFrontRegardless()
+
+        // Snapshot runs are throwaway and should not flash an icon into the menu bar.
+        if !isSnapshot { menuBar = MenuBar() }
 
         log("launched at \(panel.frame.origin.x.rounded()),\(panel.frame.origin.y.rounded())")
 
