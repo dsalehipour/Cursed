@@ -131,19 +131,20 @@ struct ContentView: View {
             }
             .frame(width: Metrics.contentWidth)
         }
-        .padding(Metrics.inset)
-        // Without a shape of its own the container is only hit where a row happens to be, which
-        // left the margins and the gaps between rows — the parts with no click to be confused
-        // with — as the one place the panel could not be picked up from.
+        // A shape of its own, so the gaps between rows can be picked up from as well as the rows
+        // themselves. Inside the inset rather than outside it: that margin is empty room for the
+        // glass edges and their shading, and reaching into it made the panel feel bigger than it
+        // looks — you could take hold of the window a clear twelve points from anything visible.
         .contentShape(Rectangle())
         .simultaneousGesture(drag.gesture)
+        .contextMenu {
+            Button("Quit cursed", action: onQuit)
+        }
+        .padding(Metrics.inset)
         // Reserved for news. A run starting, a row settling, the timers counting up: all of it
         // arrives without motion, because a panel that rearranges itself for every change is one
         // you have to keep re-reading to find out that nothing has happened.
         .animation(.smooth(duration: 0.5, extraBounce: 0.18), value: store.announcements)
-        .contextMenu {
-            Button("Quit cursed", action: onQuit)
-        }
     }
 
     private func glass(for attention: Attention) -> Glass {
