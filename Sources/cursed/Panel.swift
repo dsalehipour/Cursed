@@ -36,14 +36,12 @@ final class FloatingPanel: NSPanel {
         // most of them, on targets this small.
         isMovableByWindowBackground = false
         isOpaque = false
-        // Visually the window contributes nothing: every pixel you can see comes from the Liquid
-        // Glass shapes inside it. It cannot be *entirely* clear, though. The window server
-        // hit-tests by rendered alpha, so fully transparent pixels are not part of the window at
-        // all and clicks in the gaps between rows landed on whatever was behind — a panel that
-        // floats above everything should never let a click reach past it by accident. One 255th
-        // is the smallest alpha that survives to the framebuffer: invisible, but enough for the
-        // whole frame to catch its own clicks.
-        backgroundColor = NSColor.black.withAlphaComponent(1.0 / 255.0)
+        // Every pixel you can see comes from the Liquid Glass shapes inside, and every pixel that
+        // catches a click comes from the near-invisible wash the content lays under them. The
+        // window contributes neither. It used to supply the wash itself, which was simpler but
+        // covered the whole frame, margin included, leaving the panel solid to clicks well past
+        // anything it draws.
+        backgroundColor = .clear
         // Its own shadow is switched off so it cannot trail behind the shapes as they morph.
         hasShadow = false
         animationBehavior = .none

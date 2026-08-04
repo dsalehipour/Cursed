@@ -234,6 +234,15 @@ accumulating deltas, so a dropped event costs a frame of lag instead of leaving 
 permanently offset from the cursor, and it is anchored on the press itself, so there is no dead
 zone to cross before it comes with you.
 
+Where the panel can be grabbed at all is decided a layer below that. The window server hit-tests by
+rendered alpha, so anything fully transparent is not part of the window and a click goes straight
+past it — which would leave the gaps between rows leaking clicks onto whatever is behind. A wash of
+one part in 255 fixes that, invisible but present. It used to be the window's own background colour,
+which was simpler and wrong: the window carries a twelve point margin so the glass edges have room
+to shade into, and washing all of it made the panel catch clicks that far out from anything it
+draws. The wash now belongs to the content and stops two points past the glass, close enough to
+forgive the pixel you miss an edge by while leaving the rest of the margin to the window behind.
+
 ## How it knows
 
 Both integrations are read-only and independent. If either app or its local database is absent,

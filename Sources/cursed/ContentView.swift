@@ -106,6 +106,10 @@ struct ContentView: View {
 
     @Namespace private var glass
 
+    /// How far past the glass a press still belongs to the panel. Enough to forgive the pixel you
+    /// miss an edge by, and no more: everything beyond it is somebody else's window.
+    private static let grabSlack: CGFloat = 2
+
     var body: some View {
         GlassEffectContainer(spacing: 20) {
             VStack(spacing: Metrics.rowSpacing) {
@@ -131,16 +135,21 @@ struct ContentView: View {
             }
             .frame(width: Metrics.contentWidth)
         }
-        // A shape of its own, so the gaps between rows can be picked up from as well as the rows
-        // themselves. Inside the inset rather than outside it: that margin is empty room for the
-        // glass edges and their shading, and reaching into it made the panel feel bigger than it
-        // looks — you could take hold of the window a clear twelve points from anything visible.
+        .padding(Self.grabSlack)
+        // What makes the panel solid to a click. The window server hit-tests by rendered alpha, so
+        // a pixel this faint counts as the window while being invisible, which is what stops the
+        // gaps between rows leaking clicks onto whatever is behind them. It ends where the panel
+        // appears to end: the window keeps a wider margin for the glass to shade into, and washing
+        // all of that made the panel catch clicks a clear twelve points from anything you can see.
+        .background(Color.black.opacity(1.0 / 255.0))
+        // A shape of its own, matching the wash, so the gaps can be picked up from as well as the
+        // rows themselves.
         .contentShape(Rectangle())
         .simultaneousGesture(drag.gesture)
         .contextMenu {
             Button("Quit cursed", action: onQuit)
         }
-        .padding(Metrics.inset)
+        .padding(Metrics.inset - Self.grabSlack)
         // Reserved for news. A run starting, a row settling, the timers counting up: all of it
         // arrives without motion, because a panel that rearranges itself for every change is one
         // you have to keep re-reading to find out that nothing has happened.
