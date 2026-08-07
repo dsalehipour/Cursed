@@ -185,11 +185,24 @@ next beat. Dismissals live in memory, so restarting the app brings everything ba
 Clicking a row opens that conversation in Cursor and counts as acknowledging it, so the dot clears
 immediately. Cursor registers deep links only for automations and background agents, so there is
 no URL that opens one specific chat, and now that every conversation shares a single Agents
-window there is no per-project window to raise either. What Cursor does publish is its Recent
-Agents menu, in the menu bar extra, with an item per conversation; pressing the matching item is
-what moves Cursor to that chat. Conversations that have aged out of that menu fall back to raising
-the window whose title carries the project name, which is what the older one-window-per-folder
-layout needs.
+window there is no per-project window to raise either. The command that would do it,
+`glass.openAgentById`, takes the very id the panel already holds, but nothing outside the app can
+reach it: its URI form, `cursor.agent://local/<id>`, is not a registered scheme.
+
+What Cursor does publish is its Recent Agents menu, in the menu bar extra, with an item per
+conversation; pressing the matching item is what moves Cursor to that chat, exactly and instantly.
+That menu holds ten entries though — five in it and five behind *View More* — and cloud agents
+compete for the same slots, so a conversation you have not touched in an hour or two is usually
+not in it at all.
+
+Those fall back to the Agents window's own Search Agents palette, which is not capped: the panel
+fronts Cursor, opens the palette and types the conversation's title, then stops and leaves the
+Return to you. It stops one keypress short on purpose. The palette ranks by its own fuzzy match
+and nothing outside Cursor can read back which result it has highlighted, so a title starting on a
+common word — *API response delay investigation* — puts an unrelated chat at the top, and pressing
+Return blind opens that one instead. Opening the wrong conversation is a worse answer than handing
+you a filtered list. On the older one-window-per-folder layout there is no palette to type into,
+and the window whose title carries the project name is raised instead.
 
 This is the one feature that requires Accessibility permission. Without it a click can still bring
 Cursor forward, but only on whichever chat it was already showing — which looks like it works
@@ -383,7 +396,11 @@ driven by the render server through Core Animation. Removing it entirely was bet
 swift run cursed --list     # print current conversation state and exit
 swift run cursed --bench    # time the database poll
 swift run cursed --demo     # show one row per state, for judging the design
+swift run cursed --reveal Q # put one conversation through the click path, by id or title
 ```
+
+`--reveal` exists because the interesting half of that path only runs for conversations Cursor has
+dropped from its Recent Agents menu, which is not a state you can sit and wait for.
 
 `--snapshot <path>` renders the panel's own view to a PNG. Note that it cannot capture Liquid
 Glass, which the window server composites out of process, so it only shows plain content.

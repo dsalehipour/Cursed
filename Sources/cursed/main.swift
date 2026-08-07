@@ -10,6 +10,11 @@ if CommandLine.arguments.contains("--bench") {
     exit(0)
 }
 
+if let index = CommandLine.arguments.firstIndex(of: "--reveal"),
+   index + 1 < CommandLine.arguments.count {
+    MainActor.assumeIsolated { Diagnostics.reveal(matching: CommandLine.arguments[index + 1]) }
+}
+
 let app = NSApplication.shared
 // Agent apps have no Dock icon and no menu bar, which is what lets the panel behave as a HUD.
 app.setActivationPolicy(.accessory)

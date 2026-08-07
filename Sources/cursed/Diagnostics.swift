@@ -52,6 +52,35 @@ enum Diagnostics {
         }
     }
 
+    /// `cursed --reveal <id or title fragment>` puts one conversation through the same path a
+    /// click takes. The fallbacks only run for conversations Cursor has dropped from its recent
+    /// list, which is not a state you can sit and wait for, so this is the only practical way to
+    /// exercise them.
+    @MainActor
+    static func reveal(matching needle: String) {
+        let db = CursorDB()
+        guard db.open() else { print("could not open Cursor's database"); exit(1) }
+
+        let snapshots = db.fetch(since: 24 * 60 * 60)
+        guard let match = snapshots.first(where: {
+            $0.id.hasPrefix(needle) || $0.name.localizedCaseInsensitiveContains(needle)
+        }) else {
+            print("no conversation in the last 24h matching \"\(needle)\"")
+            exit(1)
+        }
+
+        print("target: \(match.name) (\(match.project))")
+        print("id:     \(match.id)")
+
+        CursorLink.reveal(project: match.project, title: match.name)
+
+        // The palette route is asynchronous, and without an NSApplication nothing is turning the
+        // runloop for it. Whether it worked is a question for the screen: see `drivePalette`.
+        RunLoop.main.run(until: Date().addingTimeInterval(6))
+        print("done — look at Cursor to see which conversation it is showing")
+        exit(0)
+    }
+
     /// Times the database poll in isolation, to separate query cost from UI cost.
     static func bench(iterations: Int = 200) {
         let db = CursorDB()
