@@ -22,6 +22,13 @@ final class ClaudeCodeDB {
         NSHomeDirectory() + "/Library/Application Support/Claude/local-agent-mode-sessions"
     }
 
+    private let processes = ClaudeCodeProcesses()
+
+    /// Takes the first process reading, so a caller with only one poll in it can still tell a
+    /// session waiting on you from one working. The panel needs nothing: its next poll is a
+    /// second away, and the reading it measures against is the one this poll just took.
+    func primeActivityBaseline() { processes.primeBaseline() }
+
     private let isoFractional: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -48,8 +55,26 @@ final class ClaudeCodeDB {
             .sorted { $0.1 > $1.1 }
             .prefix(40)
 
-        return files.compactMap { url, modified in
-            snapshot(at: url, modified: modified, desktop: desktop)
+        let parsed = files.map { (url: $0.0, modified: $0.1, state: transcriptState(at: $0.0)) }
+        // Only a CLI session with a turn still open can turn out to be one waiting on you, and
+        // walking the process table is not free, so it is walked only when there is such a
+        // session to explain. A Desktop session is not a candidate: it has no terminal, and so
+        // nothing for `ClaudeCodeProcesses` to find.
+        var openTurns: [String: Int] = [:]
+        for parsed in parsed where parsed.state.running
+            && desktop[parsed.url.deletingPathExtension().lastPathComponent] == nil {
+            if let cwd = parsed.state.cwd { openTurns[cwd, default: 0] += 1 }
+        }
+        // An idling process says *a* session in that directory is waiting on you, never which
+        // one, so a directory holding two unfinished CLI transcripts is left alone — as it is
+        // when it holds two running processes. An abandoned session keeps its turn open forever,
+        // and without this it would take the verdict earned by a live session beside it.
+        let parked: Set<String> = openTurns.isEmpty ? []
+            : Set(processes.parkedDirectories(now: now).filter { openTurns[$0] == 1 })
+
+        return parsed.compactMap { parsed in
+            snapshot(at: parsed.url, modified: parsed.modified, state: parsed.state,
+                     desktop: desktop, parked: parked)
         }
         // The window has to bound what comes back, not merely which files are opened. mtime says
         // a file was written to, not that the conversation moved, and these are rewritten for
@@ -136,10 +161,10 @@ final class ClaudeCodeDB {
         return files
     }
 
-    private func snapshot(at url: URL, modified: Date,
-                          desktop: [String: DesktopMeta]) -> ConversationSnapshot? {
+    private func snapshot(at url: URL, modified: Date, state: TranscriptState,
+                          desktop: [String: DesktopMeta],
+                          parked: Set<String>) -> ConversationSnapshot? {
         let id = url.deletingPathExtension().lastPathComponent
-        let state = transcriptState(at: url)
         // Nothing we can show without at least one real user prompt (or a turn still open).
         guard state.spokeAt != nil || state.running || state.awaitingAnswer else { return nil }
 
@@ -150,6 +175,14 @@ final class ClaudeCodeDB {
             ?? state.lastPrompt.map(Self.shortTitle)
             ?? state.firstPrompt.map(Self.shortTitle)
             ?? String(id.prefix(8))
+
+        // A CLI turn that is open while its process does nothing is one stopped to ask you
+        // something: the question itself reaches the transcript only once it has been answered.
+        let parkedOnYou = state.running && meta == nil
+            && (state.cwd.map(parked.contains) ?? false)
+        let awaitingAnswer = state.awaitingAnswer || parkedOnYou
+        // Being asked ends the run that asked, the same as a question read from the transcript.
+        let running = state.running && !awaitingAnswer
 
         let started = state.turnStartedAt ?? state.spokeAt ?? state.activityAt
         // When the conversation last did something is the last entry stamped inside the
@@ -163,14 +196,14 @@ final class ClaudeCodeDB {
             id: id,
             name: title,
             workspacePath: state.cwd,
-            unfinishedRunAt: state.running ? started : nil,
+            unfinishedRunAt: running ? started : nil,
             status: state.success ? "completed" : "aborted",
             lastRunStart: started,
             checkpoint: checkpoint,
             subtitle: nil,
             source: .claudeCode,
             sourceHistory: ConversationHistory(spokeAt: state.spokeAt,
-                                               awaitingAnswer: state.awaitingAnswer),
+                                               awaitingAnswer: awaitingAnswer),
             openID: meta?.desktopID
         )
     }

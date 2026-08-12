@@ -351,6 +351,28 @@ up once. A typed user message starts a turn; an assistant reply with no open too
 an `AskUserQuestion` tool still missing its result is a question waiting on you. Titles prefer a
 Desktop rename, then a `/rename` / `custom-title` entry, then the AI title or first prompt.
 
+A question asked in the **CLI** is a different matter, because the CLI does not write one down
+until it is answered. The tool call and its result are flushed together, so a question that sat on
+screen for eight minutes reaches the disk as a single write, after the fact. From the transcript
+alone a question waiting on you is indistinguishable from a turn still running, which is exactly
+what it used to look like in the panel.
+
+What tells them apart is the process. A turn in flight animates a spinner, and that alone costs
+some 420 million instructions a second — measured with nothing streaming, the session merely
+waiting on the API. The moment a question goes up the spinner stops and the process falls to about
+12 million, the same as one sitting at an empty prompt. Thirty times apart is a comfortable line to
+draw, so `proc_pid_rusage` is read for every `claude` holding a controlling terminal, and an open
+turn whose process is doing nothing is taken as a conversation stopped to ask you something. Idle
+at a prompt looks identical from the process side and is separated by the transcript, whose last
+turn has ended. A permission prompt reads as waiting too, which is right: it is every bit as stuck
+on you as a question is.
+
+What ties a process to a transcript is the working directory, and that is not always enough to name
+one conversation. Two CLI sessions in the same directory, or an abandoned one whose turn never
+closed, make it ambiguous — and an ambiguous directory is left alone rather than guessed at, since
+a mark on the wrong row is worse than no mark at all. Desktop sessions never take this path, having
+no terminal to be attached to.
+
 Clicking a Claude row opens `claude://claude.ai/epitaxy/<local-id>` when Desktop knows the session.
 `epitaxy` is the app's own internal name for its Code tab, and that route is the one Desktop builds
 for its own session links. A session Desktop has never seen belongs to the terminal it was started
@@ -471,6 +493,8 @@ signature, and a signature that changed each release would make everyone re-appr
 ## Limitations
 
 - Local conversations only. Cloud and background agents are not in this database.
+- A Claude CLI question is inferred from its process going quiet, so two CLI sessions sharing a
+  working directory leave it unresolved and neither is marked.
 - Subagents are excluded; only top-level conversations appear.
 - Names come from Cursor's own auto-generated titles, so a brand-new chat may briefly show a
   placeholder before Cursor names it.

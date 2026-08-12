@@ -10,10 +10,17 @@ enum Diagnostics {
             return
         }
 
+        // Telling a Claude CLI session waiting on you from one working is a matter of what its
+        // process did between two readings, and one command has no previous poll to borrow the
+        // first reading from. So it takes one, waits long enough to divide by, and then looks.
+        let claude = ClaudeCodeDB()
+        claude.primeActivityBaseline()
+        Thread.sleep(forTimeInterval: 0.6)
+
         let now = Date()
         let snapshots = (db.fetch(since: 24 * 60 * 60, now: now)
             + ChatGPTDB().fetch(since: 24 * 60 * 60, now: now)
-            + ClaudeCodeDB().fetch(since: 24 * 60 * 60, now: now))
+            + claude.fetch(since: 24 * 60 * 60, now: now))
             .sorted { $0.checkpoint > $1.checkpoint }
         guard !snapshots.isEmpty else {
             print("no conversations active in the last 24h")
