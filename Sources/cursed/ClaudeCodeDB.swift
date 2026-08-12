@@ -142,6 +142,13 @@ final class ClaudeCodeDB {
             ?? String(id.prefix(8))
 
         let started = state.turnStartedAt ?? state.spokeAt ?? state.activityAt
+        // When the conversation last did something is the last entry stamped inside the
+        // transcript, never the file's own mtime. The two are hours apart: these files are
+        // rewritten long after their final turn — appended entries that carry no timestamp,
+        // and rewrites by the Desktop app — so a finished run's mtime creeps forward all
+        // afternoon. Taken as the finish time it lands after the moment you clicked the row,
+        // which reads as a completion you have not seen and hands the dot straight back.
+        let checkpoint = state.activityAt == .distantPast ? modified : state.activityAt
         return ConversationSnapshot(
             id: id,
             name: title,
@@ -149,7 +156,7 @@ final class ClaudeCodeDB {
             unfinishedRunAt: state.running ? started : nil,
             status: state.success ? "completed" : "aborted",
             lastRunStart: started,
-            checkpoint: max(state.activityAt, modified),
+            checkpoint: checkpoint,
             subtitle: nil,
             source: .claudeCode,
             sourceHistory: ConversationHistory(spokeAt: state.spokeAt,
