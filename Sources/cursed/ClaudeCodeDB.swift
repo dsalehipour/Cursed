@@ -51,6 +51,16 @@ final class ClaudeCodeDB {
         return files.compactMap { url, modified in
             snapshot(at: url, modified: modified, desktop: desktop)
         }
+        // The window has to bound what comes back, not merely which files are opened. mtime says
+        // a file was written to, not that the conversation moved, and these are rewritten for
+        // hours after their last turn — so the filter above keeps handing back conversations that
+        // have been silent since the morning, and they never age out of the fetch the way every
+        // other reader's do. The panel leans on that: a view time is allowed to expire precisely
+        // because the conversation it belongs to has stopped being fetched by then. Left
+        // unbounded, the acknowledgement expires while the row is still being served, and a
+        // conversation you dealt with hours ago earns a fresh dot for having been dealt with too
+        // long ago.
+        .filter { $0.lastSignOfLife > cutoff }
     }
 
     /// Locates a session's working directory by reading its transcript, for reveal.
