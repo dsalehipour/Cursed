@@ -45,8 +45,8 @@ codesign --verify --strict "$UNPACKED/cursed.app"
 
 echo "==> publishing $TAG"
 gh release create "$TAG" "$ZIP" --title "cursed $VERSION" --notes "$(cat <<'NOTES'
-Apple Silicon, macOS 26 or later. Cursor and the ChatGPT Mac app are both optional — the panel
-reads whichever of them is there.
+Apple Silicon, macOS 26 or later. Cursor, the ChatGPT Mac app, and Claude Code (Desktop or CLI)
+are all optional — the panel reads whichever of them is there.
 
 ### Install
 

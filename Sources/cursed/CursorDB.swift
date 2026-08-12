@@ -18,11 +18,13 @@ struct ConversationSnapshot {
     enum Source: String {
         case cursor
         case chatGPT
+        case claudeCode
 
         var bundleID: String {
             switch self {
             case .cursor: return CursorLink.bundleID
             case .chatGPT: return ChatGPTLink.bundleID
+            case .claudeCode: return ClaudeCodeLink.bundleID
             }
         }
     }
@@ -45,6 +47,9 @@ struct ConversationSnapshot {
     var sourceHistory: ConversationHistory? = nil
     /// The source application's own unread state, when it publishes one.
     var sourceIsUnread: Bool? = nil
+    /// When the app that owns this conversation names it differently for opening (Claude
+    /// Desktop's `local_*` id versus the shared CLI transcript uuid).
+    var openID: String? = nil
 
     var project: String {
         guard let workspacePath, !workspacePath.isEmpty else { return "home" }

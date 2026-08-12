@@ -45,6 +45,8 @@ final class Store: ObservableObject {
         /// Last time Cursor touched the conversation; for a finished run this is when it ended.
         var lastActivity: Date
         var source: ConversationSnapshot.Source = .cursor
+        /// Claude Desktop's `local_*` id when this row came from a Desktop-linked transcript.
+        var openID: String? = nil
     }
 
     @Published private(set) var rows: [Row] = []
@@ -67,6 +69,7 @@ final class Store: ObservableObject {
 
     private let db = CursorDB()
     private let chatGPTDB = ChatGPTDB()
+    private let claudeCodeDB = ClaudeCodeDB()
     private var timer: Timer?
     private var activeIDs: Set<String> = []
     /// When each conversation was last in front of you. A timestamp rather than a flag, because
@@ -180,6 +183,7 @@ final class Store: ObservableObject {
         let now = Date()
         let fetched = db.fetch(since: queryWindow, now: now)
             + chatGPTDB.fetch(since: queryWindow, now: now)
+            + claudeCodeDB.fetch(since: queryWindow, now: now)
         // A completion you have not seen outlives the query window. Once the conversation stops
         // being fetched it is served from the last snapshot taken of it, so being away for two
         // hours cannot make a waiting dot disappear.
@@ -387,7 +391,8 @@ final class Store: ObservableObject {
             attention: attention,
             sinceLastMessage: max(0, now.timeIntervalSince(asked)),
             lastActivity: snapshot.checkpoint,
-            source: snapshot.source
+            source: snapshot.source,
+            openID: snapshot.openID
         )
     }
 

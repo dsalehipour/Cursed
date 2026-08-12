@@ -4,7 +4,7 @@
 
 # cursed
 
-**Which of your Cursor and ChatGPT conversations are running, how long ago you last said anything
+**Which of your Cursor, ChatGPT, and Claude Code conversations are running, how long ago you last said anything
 to each of them, and which ones finished while you were looking somewhere else.**
 
 <a href="https://github.com/dsalehipour/Cursed/releases/latest/download/cursed.zip"><img src="assets/download-button.png" alt="Download cursed for macOS" width="234"></a>
@@ -44,8 +44,8 @@ single green dot.
 
 ## Install
 
-Apple Silicon, macOS 26 or later. Cursor and the ChatGPT Mac app are both optional — the panel
-reads whichever of them is there.
+Apple Silicon, macOS 26 or later. Cursor, the ChatGPT Mac app, and Claude Code (Desktop or CLI)
+are all optional — the panel reads whichever of them is there.
 
 1. [**Download `cursed.zip`**](https://github.com/dsalehipour/Cursed/releases/latest/download/cursed.zip),
    unzip it, and drag `cursed.app` to Applications.
@@ -258,8 +258,8 @@ forgive the pixel you miss an edge by while leaving the rest of the margin to th
 
 ## How it knows
 
-Both integrations are read-only and independent. If either app or its local database is absent,
-the other continues to work normally.
+All three integrations are read-only and independent. If any app or its local store is absent,
+the others continue to work normally.
 
 ### Cursor
 
@@ -330,6 +330,41 @@ events are appended to the rollout JSONL path recorded with each task. `task_sta
 `task_complete`, user-message, and question-tool events provide the same run, timer, completion,
 and waiting-for-you signals used by the panel. Clicking one uses ChatGPT's published
 `codex://threads/<id>` link, so it opens the exact task without Accessibility UI scripting.
+
+### Claude Code (Desktop and CLI)
+
+Claude Code — whether you started it from the Claude Desktop app or from the `claude` CLI —
+writes one JSONL transcript per session under
+
+```
+~/.claude/projects/<encoded-cwd>/<session-id>.jsonl
+```
+
+The Desktop app keeps a second index of titles and its own `local_*` ids at
+
+```
+~/Library/Application Support/Claude/claude-code-sessions/
+```
+
+but the conversation itself is the shared JSONL, so a session you began in either place shows
+up once. A typed user message starts a turn; an assistant reply with no open tool calls ends it;
+an `AskUserQuestion` tool still missing its result is a question waiting on you. Titles prefer a
+Desktop rename, then a `/rename` / `custom-title` entry, then the AI title or first prompt.
+
+Clicking a Claude row opens `claude://claude.ai/epitaxy/<local-id>` when Desktop knows the session.
+`epitaxy` is the app's own internal name for its Code tab, and that route is the one Desktop builds
+for its own session links. A session Desktop has never seen belongs to the terminal it was started
+in, so those open Terminal on `claude --resume <id>` in the session's working directory, falling
+back to the CLI binary Desktop ships if `claude` is not on your PATH.
+
+The route that looks right is `claude://code/<id>`, and it is not: that path carries *cloud*
+session ids, and a `local_*` id is rejected with a line in Desktop's own log and no error the
+opener can see. The app simply comes to the front on whatever conversation it was already showing —
+indistinguishable from the link having worked, every time you click the row you were last reading.
+`claude://resume?session=<uuid>` does work, and takes the transcript uuid rather than the Desktop
+id, but it *imports* a session instead of focusing one: pointing it at a conversation Desktop
+already had adds a second, untitled copy of it to the sidebar. Where two Desktop entries do end up
+naming one transcript, the titled one wins.
 
 ### Working out when you last said something
 
@@ -411,6 +446,10 @@ states get tested without waiting hours for one to occur naturally:
 ```bash
 CURSED_DB=/tmp/fixture.vscdb swift run cursed --list
 ```
+
+`CURSED_CLAUDE_DIR` and `CURSED_CLAUDE_DESKTOP_SESSIONS` do the same for Claude Code's transcripts
+and for Desktop's index of them. Pointing the second at an empty directory is how the terminal half
+of the click path gets exercised, that being the branch for sessions Desktop has never seen.
 
 `--list` derives its verdict from the same code the panel uses, so it can be trusted to explain
 what the panel is showing rather than offering a second opinion.

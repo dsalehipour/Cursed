@@ -27,6 +27,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     CursorLink.reveal(project: row.project, title: row.title)
                 case .chatGPT:
                     ChatGPTLink.reveal(id: row.id)
+                case .claudeCode:
+                    ClaudeCodeLink.reveal(id: row.id, openID: row.openID)
                 }
             },
             onDismiss: { [weak self] row in

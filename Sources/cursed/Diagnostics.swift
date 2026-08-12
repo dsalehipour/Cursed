@@ -12,7 +12,8 @@ enum Diagnostics {
 
         let now = Date()
         let snapshots = (db.fetch(since: 24 * 60 * 60, now: now)
-            + ChatGPTDB().fetch(since: 24 * 60 * 60, now: now))
+            + ChatGPTDB().fetch(since: 24 * 60 * 60, now: now)
+            + ClaudeCodeDB().fetch(since: 24 * 60 * 60, now: now))
             .sorted { $0.checkpoint > $1.checkpoint }
         guard !snapshots.isEmpty else {
             print("no conversations active in the last 24h")
@@ -44,7 +45,7 @@ enum Diagnostics {
                 history.awaitingAnswer ? "ASKING" : label,
                 String(snapshot.name.prefix(31)),
                 snapshot.project,
-                snapshot.source == .cursor ? "Cursor" : "ChatGPT",
+                appName(snapshot.source),
                 Format.duration(max(0, asked)),
                 Format.duration(now.timeIntervalSince(snapshot.lastSignOfLife)),
                 String((snapshot.subtitle ?? "").prefix(30))
@@ -58,10 +59,10 @@ enum Diagnostics {
     /// exercise them.
     @MainActor
     static func reveal(matching needle: String) {
-        let db = CursorDB()
-        guard db.open() else { print("could not open Cursor's database"); exit(1) }
-
-        let snapshots = db.fetch(since: 24 * 60 * 60)
+        let now = Date()
+        let snapshots = CursorDB().fetch(since: 24 * 60 * 60, now: now)
+            + ChatGPTDB().fetch(since: 24 * 60 * 60, now: now)
+            + ClaudeCodeDB().fetch(since: 24 * 60 * 60, now: now)
         guard let match = snapshots.first(where: {
             $0.id.hasPrefix(needle) || $0.name.localizedCaseInsensitiveContains(needle)
         }) else {
@@ -69,15 +70,22 @@ enum Diagnostics {
             exit(1)
         }
 
-        print("target: \(match.name) (\(match.project))")
+        print("target: \(match.name) (\(match.project)) [\(appName(match.source))]")
         print("id:     \(match.id)")
 
-        CursorLink.reveal(project: match.project, title: match.name)
+        switch match.source {
+        case .cursor:
+            CursorLink.reveal(project: match.project, title: match.name)
+        case .chatGPT:
+            ChatGPTLink.reveal(id: match.id)
+        case .claudeCode:
+            ClaudeCodeLink.reveal(id: match.id, openID: match.openID)
+        }
 
         // The palette route is asynchronous, and without an NSApplication nothing is turning the
         // runloop for it. Whether it worked is a question for the screen: see `drivePalette`.
         RunLoop.main.run(until: Date().addingTimeInterval(6))
-        print("done — look at Cursor to see which conversation it is showing")
+        print("done — look at \(appName(match.source)) to see which conversation it is showing")
         exit(0)
     }
 
@@ -106,6 +114,14 @@ enum Diagnostics {
         let each = Date().timeIntervalSince(anchorStart) / Double(iterations) * 1000
         print(String(format: "history lookup: %.2f ms each, for \"%@\"",
                      each, sample.name as NSString))
+    }
+
+    private static func appName(_ source: ConversationSnapshot.Source) -> String {
+        switch source {
+        case .cursor: return "Cursor"
+        case .chatGPT: return "ChatGPT"
+        case .claudeCode: return "Claude"
+        }
     }
 
     private static func line(_ status: String, _ title: String, _ project: String, _ app: String,
