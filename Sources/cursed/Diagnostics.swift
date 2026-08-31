@@ -96,30 +96,49 @@ enum Diagnostics {
         exit(0)
     }
 
-    /// Times the database poll in isolation, to separate query cost from UI cost.
+    /// Times a poll the way the panel actually makes one — every reader, not just the cheap one.
+    ///
+    /// It used to time Cursor's alone, and reported a poll costing a fraction of a percent of a
+    /// core while the two readers that walk whole files went unmeasured beside it. That is how a
+    /// poll came to spend six seconds of a one-second budget without the benchmark ever noticing:
+    /// the number it printed was true, and about the wrong thing. Every source is timed here now,
+    /// and the first pass is reported separately from the rest, because the gap between them is
+    /// the caching working.
     static func bench(iterations: Int = 200) {
-        let db = CursorDB()
-        guard db.open() else { print("could not open Cursor's database"); return }
+        let window: TimeInterval = 2 * 60 * 60
+        let cursor = CursorDB()
+        let chatGPT = ChatGPTDB()
+        let claude = ClaudeCodeDB()
 
-        _ = db.fetch(since: 2 * 60 * 60)
-        let start = Date()
-        var rows = 0
-        for _ in 0..<iterations { rows += db.fetch(since: 2 * 60 * 60).count }
-        let elapsed = Date().timeIntervalSince(start)
+        func time(_ label: String, _ fetch: () -> Int) {
+            // The first read of a file is the one that pays for parsing it; every later read is
+            // the cache answering. Both are worth seeing, since the first is what a cold launch
+            // costs and the second is what sitting on screen all day costs.
+            let coldStart = Date()
+            let rows = fetch()
+            let cold = Date().timeIntervalSince(coldStart)
 
-        print(String(format: "%d polls in %.3fs — %.2f ms each (%d rows/poll)",
-                     iterations, elapsed, elapsed / Double(iterations) * 1000, rows / iterations))
-        print(String(format: "at 1 poll/sec that is %.2f%% of one core", elapsed / Double(iterations) * 100))
+            let warmStart = Date()
+            for _ in 0..<iterations { _ = fetch() }
+            let warm = Date().timeIntervalSince(warmStart) / Double(iterations)
 
-        // The timer's anchor is derived separately and costs far more, since it walks a whole
-        // conversation rather than reading columns. Timed here so the figure is visible rather
-        // than assumed: it is only paid when a live conversation may have moved on, at most once
-        // every few seconds each, not once per poll.
-        guard let sample = db.fetch(since: 2 * 60 * 60).first else { return }
+            print(String(format: "  %-13@ %8.2f ms first  %8.2f ms cached  %6.2f%% of a core  (%d rows)",
+                         label as NSString, cold * 1000, warm * 1000, warm * 100, rows))
+        }
+
+        print("poll cost by source, at 1 poll/sec:")
+        time("Cursor", { cursor.fetch(since: window).count })
+        time("ChatGPT", { chatGPT.fetch(since: window).count })
+        time("Claude Code", { claude.fetch(since: window).count })
+
+        guard cursor.isOpen, let sample = cursor.fetch(since: window).first else { return }
+        // Cursor's is the one history the panel has to ask for separately, since the other two
+        // derive theirs while walking a transcript they had to read anyway. It is only paid when
+        // a live conversation may have moved on, at most once every five seconds each.
         let anchorStart = Date()
-        for _ in 0..<iterations { _ = db.history(of: sample.id) }
+        for _ in 0..<iterations { _ = cursor.history(of: sample.id) }
         let each = Date().timeIntervalSince(anchorStart) / Double(iterations) * 1000
-        print(String(format: "history lookup: %.2f ms each, for \"%@\"",
+        print(String(format: "\nCursor history walk: %.2f ms each, for \"%@\"",
                      each, sample.name as NSString))
     }
 

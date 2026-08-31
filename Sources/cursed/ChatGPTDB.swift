@@ -9,6 +9,16 @@ import SQLite3
 final class ChatGPTDB {
     private var handle: OpaquePointer?
     private var statement: OpaquePointer?
+    /// Rollouts are the largest files the app reads and the ones it re-reads most often, a task
+    /// being appended to for as long as it runs. See `TranscriptCache`.
+    private let rollouts = TranscriptCache<RolloutState>()
+    /// Building one per rollout was its own cost: `ISO8601DateFormatter` is dear to create and
+    /// this one is configured identically every time.
+    private static let timestamps: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 
     private static var path: String {
         ProcessInfo.processInfo.environment["CURSED_CHATGPT_DB"]
@@ -64,10 +74,12 @@ final class ChatGPTDB {
         defer { sqlite3_reset(statement) }
 
         var rows: [ConversationSnapshot] = []
+        var seen: Set<String> = []
         while sqlite3_step(statement) == SQLITE_ROW {
             guard let id = text(statement, 0), let rollout = text(statement, 3) else { continue }
+            seen.insert(rollout)
             let metadataDate = date(statement, 4) ?? now
-            let state = rolloutState(at: rollout, fallback: metadataDate)
+            let (state, awaitingAnswer) = rolloutState(at: rollout, fallback: metadataDate)
             let projectless = appState.projectless.contains(id)
             rows.append(ConversationSnapshot(
                 id: id,
@@ -80,10 +92,11 @@ final class ChatGPTDB {
                 subtitle: nil,
                 source: .chatGPT,
                 sourceHistory: ConversationHistory(spokeAt: state.spokeAt,
-                                                   awaitingAnswer: state.awaitingAnswer),
+                                                   awaitingAnswer: awaitingAnswer),
                 sourceIsUnread: appState.unread.map { $0.contains(id) }
             ))
         }
+        rollouts.prune(keeping: seen)
         return rows
     }
 
@@ -113,61 +126,66 @@ final class ChatGPTDB {
         return result
     }
 
+    /// Everything the rollout itself says, and nothing derived from outside it.
+    ///
+    /// Kept free of the caller's fallback and of anything computed after the last line, because
+    /// this is what the cache resumes from: a state that had already folded in a conclusion would
+    /// carry it into the next batch of lines as though the file had said it.
     private struct RolloutState {
-        var startedAt: Date
-        var activityAt: Date
+        var startedAt: Date = .distantPast
+        var activityAt: Date = .distantPast
         var spokeAt: Date?
         var running = false
         var success = true
-        var awaitingAnswer = false
         var pendingQuestions: Set<String> = []
     }
 
-    private func rolloutState(at path: String, fallback: Date) -> RolloutState {
-        var result = RolloutState(startedAt: fallback, activityAt: fallback)
-        guard let data = FileManager.default.contents(atPath: path),
-              let contents = String(data: data, encoding: .utf8) else { return result }
+    /// The rollout's account of the task, with the database's timestamp standing in for anything
+    /// it does not mention.
+    private func rolloutState(at path: String, fallback: Date)
+        -> (state: RolloutState, awaitingAnswer: Bool) {
+        var state = rollouts.state(of: URL(fileURLWithPath: path),
+                                   initial: RolloutState.init,
+                                   line: Self.fold)
+        if state.startedAt == .distantPast { state.startedAt = fallback }
+        if state.activityAt == .distantPast { state.activityAt = fallback }
+        return (state, !state.pendingQuestions.isEmpty)
+    }
 
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        for line in contents.split(separator: "\n") {
-            guard let data = line.data(using: .utf8),
-                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let stamp = object["timestamp"] as? String,
-                  let timestamp = formatter.date(from: stamp) else { continue }
-            result.activityAt = timestamp
-            guard let payload = object["payload"] as? [String: Any],
-                  let type = payload["type"] as? String else { continue }
+    private static func fold(_ result: inout RolloutState, _ line: Data) {
+        guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+              let stamp = object["timestamp"] as? String,
+              let timestamp = timestamps.date(from: stamp) else { return }
+        result.activityAt = timestamp
+        guard let payload = object["payload"] as? [String: Any],
+              let type = payload["type"] as? String else { return }
 
-            switch type {
-            case "task_started":
-                result.startedAt = timestamp
-                result.spokeAt = timestamp
-                result.running = true
-                result.success = true
-                result.pendingQuestions.removeAll()
-            case "task_complete", "task_completed":
-                result.running = false
-                result.success = true
-            case "turn_aborted", "task_aborted":
-                result.running = false
-                result.success = false
-            case "user_message":
-                result.spokeAt = timestamp
-                result.pendingQuestions.removeAll()
-            case "custom_tool_call":
-                let name = payload["name"] as? String
-                if name == "request_user_input", let call = payload["call_id"] as? String {
-                    result.pendingQuestions.insert(call)
-                }
-            case "custom_tool_call_output":
-                if let call = payload["call_id"] as? String { result.pendingQuestions.remove(call) }
-            default:
-                break
+        switch type {
+        case "task_started":
+            result.startedAt = timestamp
+            result.spokeAt = timestamp
+            result.running = true
+            result.success = true
+            result.pendingQuestions.removeAll()
+        case "task_complete", "task_completed":
+            result.running = false
+            result.success = true
+        case "turn_aborted", "task_aborted":
+            result.running = false
+            result.success = false
+        case "user_message":
+            result.spokeAt = timestamp
+            result.pendingQuestions.removeAll()
+        case "custom_tool_call":
+            let name = payload["name"] as? String
+            if name == "request_user_input", let call = payload["call_id"] as? String {
+                result.pendingQuestions.insert(call)
             }
+        case "custom_tool_call_output":
+            if let call = payload["call_id"] as? String { result.pendingQuestions.remove(call) }
+        default:
+            break
         }
-        result.awaitingAnswer = !result.pendingQuestions.isEmpty
-        return result
     }
 
     private func text(_ stmt: OpaquePointer, _ index: Int32) -> String? {

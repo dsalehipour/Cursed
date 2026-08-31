@@ -14,8 +14,10 @@ import SQLite3
 ///                       finish time of a completed run and as a liveness check for a stuck one.
 ///
 /// Everything is opened read-only, so Cursor never contends with us for a write lock.
-struct ConversationSnapshot {
-    enum Source: String {
+/// A value throughout, so a reading taken on the reader's thread can be handed to the main one
+/// without the two coming to share anything.
+struct ConversationSnapshot: Sendable {
+    enum Source: String, Sendable {
         case cursor
         case chatGPT
         case claudeCode
@@ -68,7 +70,7 @@ struct ConversationSnapshot {
 }
 
 /// What walking a conversation's history turns up, beyond what its header row already says.
-struct ConversationHistory {
+struct ConversationHistory: Sendable {
     /// When you last said something here: a message you typed, or an answer you gave.
     let spokeAt: Date?
     /// A question is on screen in Cursor with no answer yet, so the conversation is stuck on you
