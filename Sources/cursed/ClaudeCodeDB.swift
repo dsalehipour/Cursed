@@ -23,6 +23,10 @@ final class ClaudeCodeDB {
     }
 
     private let processes = ClaudeCodeProcesses()
+    /// Transcripts grow for as long as their session runs and are re-read every poll, so the walk
+    /// is resumed from where the last one finished rather than started again. See
+    /// `TranscriptCache`.
+    private let transcripts = TranscriptCache<TranscriptState>()
 
     /// Takes the first process reading, so a caller with only one poll in it can still tell a
     /// session waiting on you from one working. The panel needs nothing: its next poll is a
@@ -55,6 +59,7 @@ final class ClaudeCodeDB {
             .sorted { $0.1 > $1.1 }
             .prefix(40)
 
+        transcripts.prune(keeping: Set(files.map { $0.0.path }))
         let parsed = files.map { (url: $0.0, modified: $0.1, state: transcriptState(at: $0.0)) }
         // Only a CLI session with a turn still open can turn out to be one waiting on you, and
         // walking the process table is not free, so it is walked only when there is such a
@@ -100,9 +105,11 @@ final class ClaudeCodeDB {
         desktopIndex()[id]?.desktopID
     }
 
-    private struct DesktopMeta {
+    struct DesktopMeta {
         var title: String?
         var desktopID: String
+        /// The transcript this entry describes, which is only known once the file is read.
+        var cliID: String
     }
 
     private func desktopIndex() -> [String: DesktopMeta] {
@@ -117,30 +124,37 @@ final class ClaudeCodeDB {
             for case let url as URL in enumerator {
                 guard url.lastPathComponent.hasPrefix("local_"),
                       url.pathExtension == "json",
-                      let data = try? Data(contentsOf: url),
-                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                else { continue }
+                      let meta = Self.parseDesktopEntry(at: url) else { continue }
 
-                // VM / Cowork sessions are not local Code sessions.
-                if object["vmProcessName"] != nil { continue }
-                if let cwd = object["cwd"] as? String, cwd.hasPrefix("/sessions/") { continue }
-                if object["isArchived"] as? Bool == true { continue }
-
-                let desktopID = (object["sessionId"] as? String)
-                    ?? url.deletingPathExtension().lastPathComponent
-                guard let cliID = object["cliSessionId"] as? String, !cliID.isEmpty else { continue }
-                let title = (object["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
                 // One transcript can have two Desktop entries: importing a session Desktop already
                 // knows adds a second, untitled one rather than reusing the original. Prefer the
                 // named entry, which is the one that reads as the conversation in the sidebar.
-                if result[cliID] != nil, title?.isEmpty != false { continue }
-                result[cliID] = DesktopMeta(
-                    title: (title?.isEmpty == false) ? title : nil,
-                    desktopID: desktopID
-                )
+                if result[meta.cliID] != nil, meta.title == nil { continue }
+                result[meta.cliID] = meta
             }
         }
         return result
+    }
+
+    private static func parseDesktopEntry(at url: URL) -> DesktopMeta? {
+        guard let data = try? Data(contentsOf: url),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+
+        // VM / Cowork sessions are not local Code sessions.
+        if object["vmProcessName"] != nil { return nil }
+        if let cwd = object["cwd"] as? String, cwd.hasPrefix("/sessions/") { return nil }
+        if object["isArchived"] as? Bool == true { return nil }
+
+        let desktopID = (object["sessionId"] as? String)
+            ?? url.deletingPathExtension().lastPathComponent
+        guard let cliID = object["cliSessionId"] as? String, !cliID.isEmpty else { return nil }
+        let title = (object["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return DesktopMeta(
+            title: (title?.isEmpty == false) ? title : nil,
+            desktopID: desktopID,
+            cliID: cliID
+        )
     }
 
     private func sessionFiles() -> [URL] {
@@ -226,59 +240,62 @@ final class ClaudeCodeDB {
         var awaitingAssistant = false
     }
 
+    /// The transcript's own account of the session, with the verdicts drawn from it afterwards.
+    ///
+    /// The verdicts are deliberately not folded in: this state is what the cache resumes from, and
+    /// one carrying a conclusion would take it into the next batch of lines as though the file had
+    /// said so.
     private func transcriptState(at url: URL) -> TranscriptState {
-        var result = TranscriptState()
-        guard let data = try? Data(contentsOf: url),
-              let contents = String(data: data, encoding: .utf8) else { return result }
-
-        for line in contents.split(separator: "\n", omittingEmptySubsequences: true) {
-            guard let lineData = line.data(using: .utf8),
-                  let object = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
-                  let type = object["type"] as? String else { continue }
-
-            if let cwd = object["cwd"] as? String, !cwd.isEmpty { result.cwd = cwd }
-            if let stamp = parseDate(object["timestamp"] as? String) {
-                result.activityAt = stamp
-            }
-
-            // Sidechains are exploratory branches; their tool traffic must not keep the parent
-            // session looking mid-turn.
-            if object["isSidechain"] as? Bool == true { continue }
-
-            switch type {
-            case "user":
-                applyUser(object, to: &result)
-            case "assistant":
-                applyAssistant(object, to: &result)
-            case "custom-title":
-                if let title = object["customTitle"] as? String, !title.isEmpty {
-                    result.customTitle = title
-                }
-            case "ai-title":
-                if let title = object["aiTitle"] as? String, !title.isEmpty {
-                    result.aiTitle = title
-                }
-            case "last-prompt":
-                if let prompt = object["lastPrompt"] as? String, !prompt.isEmpty {
-                    result.lastPrompt = prompt
-                }
-            case "agent-name":
-                // Plan-mode naming; treat as a custom title when nothing stronger is set.
-                if result.customTitle == nil,
-                   let name = object["agentName"] as? String, !name.isEmpty {
-                    result.customTitle = name
-                }
-            default:
-                break
-            }
+        var result = transcripts.state(of: url, initial: TranscriptState.init) { state, line in
+            self.fold(&state, line)
         }
-
         result.running = result.awaitingAssistant || !result.openTools.isEmpty
         result.awaitingAnswer = !result.pendingAsks.isEmpty
         // A question ends the turn that asked it, the same way Cursor's ask does: the panel
         // should show amber, not a live run that cannot proceed.
         if result.awaitingAnswer { result.running = false }
         return result
+    }
+
+    private func fold(_ result: inout TranscriptState, _ line: Data) {
+        guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+              let type = object["type"] as? String else { return }
+
+        if let cwd = object["cwd"] as? String, !cwd.isEmpty { result.cwd = cwd }
+        if let stamp = parseDate(object["timestamp"] as? String) {
+            result.activityAt = stamp
+        }
+
+        // Sidechains are exploratory branches; their tool traffic must not keep the parent
+        // session looking mid-turn.
+        if object["isSidechain"] as? Bool == true { return }
+
+        switch type {
+        case "user":
+            applyUser(object, to: &result)
+        case "assistant":
+            applyAssistant(object, to: &result)
+        case "custom-title":
+            if let title = object["customTitle"] as? String, !title.isEmpty {
+                result.customTitle = title
+            }
+        case "ai-title":
+            if let title = object["aiTitle"] as? String, !title.isEmpty {
+                result.aiTitle = title
+            }
+        case "last-prompt":
+            if let prompt = object["lastPrompt"] as? String, !prompt.isEmpty {
+                result.lastPrompt = prompt
+            }
+        case "agent-name":
+            // Plan-mode naming; treat as a custom title when nothing stronger is set.
+            if result.customTitle == nil,
+               let name = object["agentName"] as? String, !name.isEmpty {
+                result.customTitle = name
+            }
+        default:
+            break
+        }
     }
 
     private func applyUser(_ object: [String: Any], to result: inout TranscriptState) {

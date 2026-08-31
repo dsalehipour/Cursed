@@ -67,10 +67,13 @@ final class Store: ObservableObject {
     /// Only conversations changed this recently are even considered.
     private let queryWindow: TimeInterval = 2 * 60 * 60
 
-    private let db = CursorDB()
-    private let chatGPTDB = ChatGPTDB()
-    private let claudeCodeDB = ClaudeCodeDB()
+    /// Every database and file read the panel makes, and the only place they happen. Held as an
+    /// actor so none of it can touch the thread that draws the window.
+    private let reader = ConversationReader()
     private var timer: Timer?
+    /// One poll at a time. The timer goes on firing while a reading is in flight, and two polls
+    /// landing together would each count the same completion as news.
+    private var polling = false
     private var activeIDs: Set<String> = []
     /// When each conversation was last in front of you. A timestamp rather than a flag, because
     /// having seen a conversation only means anything relative to when it finished: glance at a
@@ -89,25 +92,6 @@ final class Store: ObservableObject {
     private var waiting: [String: ConversationSnapshot] = [:]
     private var hasPolled = false
 
-    /// What the last walk of a conversation's history found, remembered rather than re-derived.
-    /// The walk covers every entry in the conversation, which is far too dear to repeat every
-    /// second for answers that change only when you type something or answer a question.
-    private struct Anchor {
-        let spokeAt: Date?
-        let awaitingAnswer: Bool
-        /// Re-derived the moment this moves, since a new run means you certainly said something.
-        let runStart: Date
-        /// Re-derived when this moves too, which is what catches a question appearing. Asking one
-        /// *ends* the run, so keying on the run alone leaves the conversation looking merely
-        /// finished, with nothing left to prompt another look at it.
-        let signOfLife: Date
-        let checkedAt: Date
-    }
-    private var anchors: [String: Anchor] = [:]
-    /// How stale a live conversation's anchor may get. An answer given mid-run surfaces within
-    /// this, which is well under the resolution anyone reads a minutes-scale timer at.
-    private let anchorRefresh: TimeInterval = 5
-
     var onFinished: ((Row) -> Void)?
     var onAsked: ((Row) -> Void)?
     /// Which conversations were already waiting on an answer last poll, so a question announces
@@ -115,7 +99,13 @@ final class Store: ObservableObject {
     private var askingIDs: Set<String> = []
 
     func start() {
-        poll()
+        Task {
+            // Telling a Claude CLI session waiting on you from one working is a matter of what
+            // its process did between two readings, and the first poll has no earlier one to
+            // measure against.
+            await reader.primeActivityBaseline()
+            await poll()
+        }
         schedule(interval: pollInterval)
     }
 
@@ -123,7 +113,7 @@ final class Store: ObservableObject {
     /// straight away.
     func acknowledge(_ id: String) {
         lastViewed[id] = Date()
-        poll()
+        Task { await poll() }
     }
 
     /// Drops a row from the panel until its conversation next starts a run.
@@ -137,7 +127,7 @@ final class Store: ObservableObject {
         // Otherwise it would be held indefinitely as an unseen completion, waiting for an
         // acknowledgement that dismissing it has already given.
         waiting.removeValue(forKey: id)
-        poll()
+        Task { await poll() }
     }
 
     /// Fills the panel with one row per state, for judging the design without waiting for real
@@ -173,17 +163,20 @@ final class Store: ObservableObject {
     private func schedule(interval: TimeInterval) {
         timer?.invalidate()
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.poll() }
+            Task { @MainActor in await self?.poll() }
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }
 
-    private func poll() {
+    private func poll() async {
+        guard !polling else { return }
+        polling = true
+        defer { polling = false }
+
         let now = Date()
-        let fetched = db.fetch(since: queryWindow, now: now)
-            + chatGPTDB.fetch(since: queryWindow, now: now)
-            + claudeCodeDB.fetch(since: queryWindow, now: now)
+        let reading = await reader.read(window: queryWindow, now: now)
+        let fetched = reading.snapshots
         // A completion you have not seen outlives the query window. Once the conversation stops
         // being fetched it is served from the last snapshot taken of it, so being away for two
         // hours cannot make a waiting dot disappear.
@@ -208,29 +201,27 @@ final class Store: ObservableObject {
 
         // Before the rows are built, so a conversation you are reading right now is already
         // marked seen by the time this poll decides whether to give it a dot.
-        noteConversationOnScreen(now: now, in: snapshots)
+        noteConversationOnScreen(now: now, in: snapshots,
+                                 selected: reading.selectedConversationID)
         noteChatGPTReadReceipts(now: now, in: snapshots)
 
         var visible: [Row] = []
         var stillActive: Set<String> = []
         var stillAsking: Set<String> = []
-        var scanned: Set<String> = []
 
         for snapshot in snapshots {
-            scanned.insert(snapshot.id)
             let status = status(for: snapshot, now: now)
             if status.isActive { stillActive.insert(snapshot.id) }
             // Ahead of the chime as well as the row, so something you have waved off stays quiet.
             if let waved = dismissed[snapshot.id], snapshot.lastRunStart <= waved { continue }
-            // A run ending is the one moment worth reading the history immediately rather than
-            // when the throttle next allows: it is how a question announces itself, and waiting
-            // even a second would chime for a completion and then correct itself.
             let justEnded = activeIDs.contains(snapshot.id) && !status.isActive
-            let anchor = anchor(for: snapshot, active: status.isActive,
-                                force: justEnded, now: now)
+            // Resolved by the reader, for every source rather than only the two that get it for
+            // free. A snapshot served from `waiting` keeps the one it was stored with, which is
+            // the right answer for a conversation that has stopped being fetched at all.
+            let history = snapshot.sourceHistory ?? .unknown
             let attention = attention(for: status, id: snapshot.id,
                                       finishedAt: snapshot.checkpoint,
-                                      awaitingAnswer: anchor.awaitingAnswer, now: now)
+                                      awaitingAnswer: history.awaitingAnswer, now: now)
             // Settled before the filters below, every one of which can skip the rest of this
             // iteration. Leaving a stale snapshot behind would have the next poll serve the row
             // back from it, dot and all, which is precisely what dropping it meant to do.
@@ -265,7 +256,7 @@ final class Store: ObservableObject {
             }
 
             let entry = row(snapshot, status: status, attention: attention,
-                            spokeAt: anchor.spokeAt, now: now)
+                            spokeAt: history.spokeAt, now: now)
             if justFinished {
                 announcements += 1
                 onFinished?(entry)
@@ -284,10 +275,6 @@ final class Store: ObservableObject {
 
         activeIDs = stillActive
         askingIDs = stillAsking
-        // Anchors are pruned against everything looked at rather than everything shown. A row can
-        // be dropped and still be worth an anchor: the answer is what decides whether it comes
-        // back, so discarding it would mean re-walking that history on the very next poll.
-        anchors = anchors.filter { scanned.contains($0.key) }
         // View times outlive the list. A row leaving it is usually the consequence of having been
         // seen, so pruning against what is listed would forget the acknowledgement and hand the
         // row its dot back on the very next poll. They expire by age instead, past the point
@@ -334,9 +321,10 @@ final class Store: ObservableObject {
     /// Both halves are needed. The database names the chat that is on screen, but says nothing
     /// about whether you are looking at it: that chat stays selected while Cursor sits behind
     /// your browser, and marking it seen then would clear dots for runs you never saw.
-    private func noteConversationOnScreen(now: Date, in snapshots: [ConversationSnapshot]) {
+    private func noteConversationOnScreen(now: Date, in snapshots: [ConversationSnapshot],
+                                          selected: String?) {
         guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == CursorLink.bundleID,
-              let id = db.selectedConversationID() else { return }
+              let id = selected else { return }
         lastViewed[id] = now
 
         // Logged on change only: this runs every poll for as long as Cursor is in front. Named
@@ -394,46 +382,6 @@ final class Store: ObservableObject {
             source: snapshot.source,
             openID: snapshot.openID
         )
-    }
-
-    /// When you last spoke in a conversation, and whether it is waiting on an answer from you.
-    ///
-    /// The timer counts from the former, for which the run's own start is only a stand-in. The two
-    /// agree for a conversation you sent a message to and left, but diverge in both directions:
-    /// answering a question mid-run does not start a new run, so the timer would sit on an
-    /// hours-old figure minutes after you replied; and `lastUpdatedAt` is nudged by things that
-    /// are not you at all, which would have the timer reset on a conversation you have not touched
-    /// since yesterday. The stand-in is still what a conversation too new or too odd to read
-    /// falls back to.
-    ///
-    /// Anything that stirs at all is worth re-reading, not merely anything still running. A
-    /// question ends the run that asked it, so a conversation waiting on you looks exactly like
-    /// one that finished and is asking for nothing — and keyed on the run alone, the last reading
-    /// taken while it was live would stand for as long as the app did. A conversation already
-    /// known to be waiting stays on the same clock for the mirror of that reason: answering does
-    /// not begin a new run either, so nothing else would notice you had replied.
-    private func anchor(for snapshot: ConversationSnapshot, active: Bool,
-                        force: Bool, now: Date) -> Anchor {
-        if let history = snapshot.sourceHistory {
-            return Anchor(spokeAt: history.spokeAt,
-                          awaitingAnswer: history.awaitingAnswer,
-                          runStart: snapshot.lastRunStart,
-                          signOfLife: snapshot.lastSignOfLife,
-                          checkedAt: now)
-        }
-        if !force, let cached = anchors[snapshot.id], cached.runStart == snapshot.lastRunStart {
-            let stirred = cached.signOfLife != snapshot.lastSignOfLife
-                || active || cached.awaitingAnswer
-            if !(stirred && now.timeIntervalSince(cached.checkedAt) > anchorRefresh) {
-                return cached
-            }
-        }
-        let history = db.history(of: snapshot.id)
-        let fresh = Anchor(spokeAt: history.spokeAt, awaitingAnswer: history.awaitingAnswer,
-                           runStart: snapshot.lastRunStart, signOfLife: snapshot.lastSignOfLife,
-                           checkedAt: now)
-        anchors[snapshot.id] = fresh
-        return fresh
     }
 
     /// Questions first, then runs in flight, then completions still waiting on you, then history.

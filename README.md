@@ -433,15 +433,50 @@ wins on both accuracy and latency.
 
 ## Performance
 
-It is meant to sit on screen all day, so cost was measured rather than assumed:
+It is meant to sit on screen all day, so cost is measured rather than assumed:
 
 | | CPU (one core) |
 | --- | --- |
-| Database poll, 200 iterations | 0.26 ms each — 0.03% at 1 Hz |
-| Whole app, tracking two live runs | **~0.1%** |
+| Cursor poll | 3.4 ms — 0.34% at 1 Hz |
+| ChatGPT poll, 18 tasks over 443 MB of rollouts | 2.2 ms — 0.22% at 1 Hz |
+| Claude Code poll | 7 ms — 0.7% at 1 Hz |
+| Main thread, while all of that is happening | **0%** |
 
 Polling drops from 1 s to 3 s when nothing is running, and the query is bounded to
-conversations touched in the last two hours so it never reads more than a handful of blobs.
+conversations touched in the last two hours.
+
+Those figures are recent, and the story behind them is the more useful part.
+
+For a long time only the first row was measured. Cursor's poll is a bounded query over a few
+columns and costs a couple of milliseconds, and `--bench` timed it and nothing else — so it went
+on reporting a tenth of a percent of a core while the two readers added later went unwatched
+beside it. Those two answer by walking whole files, and the files grow: a Codex rollout is
+appended to for the life of a task and never rotated, and the ones on this machine reached
+**161 MB**. Parsing at around 72 MB/s, a single poll was spending **6.4 seconds** of its
+one-second budget, on the main thread, which is the thread that lays out the window and delivers
+clicks. Opening a conversation took five seconds because the click waited behind a poll; dragging
+the panel stuttered for the same reason. It got worse through the day because the file got longer
+through the day.
+
+Two things fixed it, and both were needed.
+
+**The walk is resumed, not repeated.** Parsed state is kept against the file's size and
+modification time, and a file that has grown is read only from where the last walk stopped — see
+`TranscriptCache`. Keying on the file's identity alone would have been the wrong half of the fix:
+an idle transcript is the cheap case either way, while the session actually running is written to
+every few hundredths of a second, so a plain cache would have missed on every poll on exactly the
+file that cost the most. Resuming takes a live 161 MB rollout from **781 ms** a poll to
+**0.09 ms**. Because these files are not purely append-only — Claude's Desktop app rewrites them
+— the bytes before the resume point are kept and checked, and anything that fails to match is read
+again from the start.
+
+**None of it runs on the main thread.** Every database and file read now lives behind
+`ConversationReader`, an actor, and the store awaits a plain value from it. Caching alone would
+still have left the first read of a large file blocking the UI; a background thread alone would
+just have burned a core somewhere less visible. Sampled during a cold read of 443 MB, the main
+thread sits idle in its run loop for 100% of samples, against 100% *inside* the parser before.
+
+`--bench` now times every reader, and reports the first read separately from the ones after it.
 
 Nothing on screen animates continuously. An earlier design pulsed a dot while a run was in
 flight, which cost **5.9% of a core** as a SwiftUI `repeatForever` animation and 0.97% when
@@ -451,7 +486,7 @@ driven by the render server through Core Animation. Removing it entirely was bet
 
 ```bash
 swift run cursed --list     # print current conversation state and exit
-swift run cursed --bench    # time the database poll
+swift run cursed --bench    # time a poll of every source, first read and cached
 swift run cursed --demo     # show one row per state, for judging the design
 swift run cursed --reveal Q # put one conversation through the click path, by id or title
 ```
